@@ -41,6 +41,29 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 All AI provider keys stay server-side as **Supabase Edge Function secrets** — the
 Next.js app never needs them, it only calls the functions.
 
+### AI engine secrets
+
+Response capture queries one provider per engine. An engine is only measured
+when its secret is set — if a key is missing the engine is skipped, and the GEO
+score is computed from the engines that did answer:
+
+| Engine             | Secret               |
+| ------------------ | -------------------- |
+| ChatGPT, Copilot   | `OPENAI_API_KEY`     |
+| Google AI / Gemini | `GEMINI_API_KEY`     |
+| Perplexity         | `PERPLEXITY_API_KEY` |
+| Claude             | `ANTHROPIC_API_KEY`  |
+| Grok               | `XAI_API_KEY`        |
+
+Settings → *AI engines & measurement* shows which are live and names the exact
+secret each missing engine needs.
+
+Model ids are **not** pinned: each provider has a fallback chain in
+`supabase/functions/_shared/providers.ts` and the first id the provider still
+accepts is used, so a retired model degrades to the next one instead of
+silently dropping the engine. To pin one, set `OPENAI_MODEL`, `GEMINI_MODEL`,
+`PERPLEXITY_MODEL`, `ANTHROPIC_MODEL` or `XAI_MODEL`.
+
 ## Architecture
 
 - **Auth & routing** — `src/proxy.ts` refreshes the Supabase session cookie and
@@ -64,6 +87,12 @@ Next.js app never needs them, it only calls the functions.
 - Tables are `geo_*`-prefixed with RLS (`FOR ALL TO authenticated`).
 - Edge functions: `geo-run`, `geo-run-batch`, `geo-radar`, `geo-news`,
   `geo-listen`, `geo-engines`, `geo-advise`.
+- The capture-path functions (`geo-run`, `geo-run-batch`, `geo-listen`,
+  `geo-engines`) live in `supabase/functions/` and share
+  `_shared/providers.ts`. Deploy with `supabase functions deploy <slug>`.
+  Keep `verify_jwt` as-is: `true` for `geo-run` and `geo-engines`, `false` for
+  `geo-run-batch` and `geo-listen` (the `pg_cron` jobs call them with the
+  publishable key). The other functions are still dashboard-only.
 - Two `pg_cron` jobs run monthly snapshots + listening scans server-side.
 
 The retired hosting hack (`geo_app` table + `geo-pilot`/`geo-publish`/`geo-diag`

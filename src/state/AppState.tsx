@@ -83,6 +83,8 @@ type Ctx = {
   brand: Brand | null;
   data: BrandData;
   engines: EngineStatus;
+  /** Engine name -> the edge-function secret still needed to make it live. */
+  engineKeyEnv: Record<string, string>;
   memory: MemoryOutlet[] | null;
 
   setMode: (m: Mode) => void;
@@ -136,6 +138,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [brand, setBrand] = useState<Brand | null>(null);
   const [data, setData] = useState<BrandData>(EMPTY);
   const [engines, setEngines] = useState<EngineStatus>({ Claude: true });
+  const [engineKeyEnv, setEngineKeyEnv] = useState<Record<string, string>>({});
   const [memory, setMemory] = useState<MemoryOutlet[] | null>(null);
 
   const [toastMsg, setToastMsg] = useState("");
@@ -308,8 +311,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     try {
       const j = await callFn("geo-engines", {}, EngineStatusSchema);
       setEngines((j.engines as EngineStatus) || {});
+      setEngineKeyEnv(j.key_env || {});
     } catch {
       setEngines({ Claude: true });
+      setEngineKeyEnv({});
     }
   }, []);
 
@@ -419,6 +424,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     brand,
     data,
     engines,
+    engineKeyEnv,
     memory,
     setMode,
     toggleMode,

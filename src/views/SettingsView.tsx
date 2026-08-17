@@ -37,6 +37,7 @@ export default function SettingsView() {
     samples,
     setSamples,
     engines,
+    engineKeyEnv,
     archivedBrands,
   } = useAppState();
 
@@ -1090,13 +1091,30 @@ export default function SettingsView() {
           <div className="flex" style={{ marginTop: 8 }}>
             {ENGINES.map((en) => {
               const live = engines[en];
+              const secret = engineKeyEnv[en];
               return (
-                <span key={en} className={`tag ${live ? "t-yes" : "t-na"}`}>
-                  {en} {live ? "● live" : "○ needs key"}
+                <span
+                  key={en}
+                  className={`tag ${live ? "t-yes" : "t-na"}`}
+                  title={
+                    live
+                      ? `${en} is live`
+                      : `${en} is off — set the ${secret || "provider"} secret`
+                  }
+                >
+                  {en} {live ? "● live" : `○ needs ${secret || "key"}`}
                 </span>
               );
             })}
           </div>
+          {ENGINES.some((en) => !engines[en]) && (
+            <div className="legend-note" style={{ marginTop: 6 }}>
+              <b>Only {ENGINES.filter((en) => engines[en]).length} of {ENGINES.length}{" "}
+              engines are live.</b>{" "}
+              Runs cover live engines only, so the score reflects those engines alone.
+              Add the missing secrets below to measure the full set.
+            </div>
+          )}
           <div className="wrow" style={{ marginTop: 10, maxWidth: 340 }}>
             <label>Samples per prompt</label>
             <input
@@ -1111,9 +1129,12 @@ export default function SettingsView() {
           </div>
           <div className="legend-note">
             To add an engine, put its key in Supabase → Project Settings → Edge Functions
-            secrets: <b>OPENAI_API_KEY</b>, <b>GEMINI_API_KEY</b>,{" "}
-            <b>PERPLEXITY_API_KEY</b>, <b>XAI_API_KEY</b>. Perplexity returns real
-            citations.
+            secrets: <b>ANTHROPIC_API_KEY</b> (Claude), <b>OPENAI_API_KEY</b> (ChatGPT +
+            Copilot), <b>GEMINI_API_KEY</b>, <b>PERPLEXITY_API_KEY</b>,{" "}
+            <b>XAI_API_KEY</b> (Grok). Perplexity returns real citations. Each provider
+            picks its own current model automatically; to pin one, set{" "}
+            <b>OPENAI_MODEL</b>, <b>GEMINI_MODEL</b>, <b>ANTHROPIC_MODEL</b>,{" "}
+            <b>PERPLEXITY_MODEL</b> or <b>XAI_MODEL</b>.
           </div>
         </div>
 
