@@ -129,7 +129,9 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const mentions = results.map((o) => (o.mentioned ? 1 : 0));
+  // Annotated: without it these infer as (0 | 1)[], and reduce then rejects the
+  // running sum because a number is not assignable back to 0 | 1.
+  const mentions: number[] = results.map((o) => (o.mentioned ? 1 : 0));
   const mrate = mentions.reduce((a, b) => a + b, 0) / mentions.length;
   const mentioned = results.filter((o) => o.mentioned);
 
