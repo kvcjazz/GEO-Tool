@@ -175,6 +175,17 @@ function isModelUnavailable(status: number, message: string): boolean {
   return status === 404;
 }
 
+/**
+ * An account-level billing/quota block. Providers return this as 429, the same
+ * status as genuine rate limiting, but no amount of waiting or trying a
+ * different model fixes it — so it must fail fast rather than walk the whole
+ * model chain twice over.
+ */
+function isBillingBlock(message: string): boolean {
+  return /(insufficient_quota|exceeded your current quota|quota|billing|payment required|credit balance|no credits)/i
+    .test(message || "");
+}
+
 function errText(status: number, payload: unknown): string {
   const p = payload as
     | { error?: { message?: string } | string; message?: string }
@@ -307,7 +318,9 @@ export async function callModel(
   maxTokens = 900,
 ): Promise<ModelResult> {
   let lastError = "";
+  let lastModel = "";
   for (const model of candidates(provider)) {
+    lastModel = model;
     for (let tries = 0; tries < 2; tries++) {
       let a: Attempt;
       try {
@@ -320,16 +333,32 @@ export async function callModel(
         return { text: a.text, citations: a.citations, model, error: "" };
       }
       lastError = `${model} → ${a.message}`;
+      if (isBillingBlock(a.message)) {
+        // The key authenticates but the account has no credit. Say so plainly:
+        // the fix is on the provider's billing page, not in this code.
+        return {
+          text: "",
+          citations: [],
+          model,
+          error: `${KEY_ENV[provider]} is valid but the ${provider} account has no ` +
+            `credit/quota — add billing with that provider. (${a.message})`,
+        };
+      }
       if (isModelUnavailable(a.status, a.message)) break; // next model id
       const transient = a.status === 429 || a.status >= 500 || a.status === 0;
       if (!transient) {
-        // Auth, quota, bad request: another model id will not help.
+        // Auth or bad request: another model id will not help.
         return { text: "", citations: [], model, error: lastError };
       }
       if (tries === 0) await new Promise((res) => setTimeout(res, 1200));
     }
   }
-  return { text: "", citations: [], model: "", error: lastError || "no model available" };
+  return {
+    text: "",
+    citations: [],
+    model: lastModel,
+    error: lastError || "no model available",
+  };
 }
 
 /** Pull the first JSON object out of a model reply, tolerating code fences. */
