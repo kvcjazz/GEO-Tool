@@ -109,3 +109,22 @@ export const AdviseTailorSchema = z.object({
   error: z.string().nullish(),
 });
 export type AdviseTailorResponse = z.infer<typeof AdviseTailorSchema>;
+
+// geo-users (account administration)
+export const AdminUserSchema = z.object({
+  id: z.string(),
+  email: z.string().nullish(),
+  created_at: z.string().nullish(),
+  last_sign_in_at: z.string().nullish(),
+  email_confirmed: z.boolean().nullish(),
+  role: z.string().nullish(),
+});
+export type AdminUser = z.infer<typeof AdminUserSchema>;
+
+export const UsersResponseSchema = z.object({
+  ok: z.boolean(),
+  users: z.array(AdminUserSchema).nullish(),
+  user: AdminUserSchema.nullish(),
+  error: z.string().nullish(),
+});
+export type UsersResponse = z.infer<typeof UsersResponseSchema>;

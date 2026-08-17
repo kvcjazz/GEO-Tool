@@ -14,6 +14,7 @@ import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
+import UsersAdmin from "@/views/UsersAdmin";
 import type { Prompt } from "@/lib/types";
 import type { Database } from "@/lib/database.types";
 import { z } from "zod";
@@ -500,6 +501,9 @@ export default function SettingsView() {
         Customise this client&#39;s strategy and GEO parameters. Changes save to the
         database.
       </div>
+
+      {/* Users & access (account-wide) */}
+      <UsersAdmin />
 
       {/* Visibility strategy */}
       <div className="card stack" style={{ marginBottom: 16 }}>
