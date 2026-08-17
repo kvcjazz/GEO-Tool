@@ -13,7 +13,7 @@ import {
   PROVIDERS,
 } from "../_shared/providers.ts";
 
-const SB = Deno.env.get("SUPABASE_URL");
+const SB = Deno.env.get("SUPABASE_URL") || "";
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const H: Record<string, string> = {
   apikey: SR,
