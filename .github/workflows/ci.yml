@@ -1,0 +1,57 @@
+name: CI
+
+# Added because the bug that broke response capture lived in the Supabase edge
+# functions, which nothing checked: they existed only in the Supabase dashboard,
+# and the Next build deliberately excludes them. The `edge-functions` job below
+# is the one that closes that gap.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  web:
+    name: Next app (build + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # `next build` runs the TypeScript check too, so this covers types.
+      - name: Build
+        run: npm run build
+
+      # Non-blocking for now: the repo has 6 pre-existing errors from the newer
+      # react-hooks rules (set-state-in-effect, refs-during-render) in
+      # AppState/PlanningView/SettingsView/UsersAdmin. They are load-on-mount
+      # patterns that need a real refactor, not a suppression — so lint reports
+      # here without gating merges. Remove continue-on-error once they're fixed.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+
+  edge-functions:
+    name: Supabase edge functions (deno check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Type-checks the functions and their shared provider client under Deno's
+      # strict defaults. Catches what broke capture before: a bad import, a
+      # renamed export, or a type error in the multi-provider code.
+      # No `deno fmt --check` or `deno lint` on purpose — the repo is formatted
+      # to the Next/Prettier conventions, not Deno's.
+      - name: Type-check edge functions
+        run: deno check supabase/functions/_shared/*.ts supabase/functions/*/index.ts

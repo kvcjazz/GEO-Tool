@@ -147,10 +147,15 @@ export default function CaptureView() {
     if (!data.currentRun) return toast("No current run for this brand");
     const engs = liveEngines();
     if (!engs.length) return toast("No live engines — add an API key in Settings");
+    const off = ENGINES.filter((en) => !engines[en]);
     const total = active.length * engs.length;
     if (
       !window.confirm(
-        "Auto-run " +
+        (off.length
+          ? `Only ${engs.length} of ${ENGINES.length} engines are live — ` +
+            `${off.join(", ")} will be skipped (add their keys in Settings).\n\n`
+          : "") +
+          "Auto-run " +
           engs.join(", ") +
           " across " +
           active.length +
@@ -164,6 +169,7 @@ export default function CaptureView() {
       return;
     setBusy(true);
     let done = 0;
+    const failures: string[] = [];
     for (const p of active) {
       for (const eng of engs) {
         done++;
@@ -181,7 +187,11 @@ export default function CaptureView() {
             RunResponseSchema,
           );
           if (!j.ok) {
-            if (j.error !== "no_key") toast(eng + ": " + (j.error || "run failed"));
+            // A dead model id or a rejected key used to be indistinguishable
+            // from "engine not live" — show the provider's own reason.
+            const why = j.detail || j.error || "run failed";
+            if (j.error !== "no_key") toast(eng + ": " + why);
+            failures.push(eng + ": " + why);
             continue;
           }
           const o = j.result!;
@@ -210,12 +220,18 @@ export default function CaptureView() {
           }
         } catch (e) {
           toast("Error: " + String(e));
+          failures.push(eng + ": " + String(e));
         }
       }
     }
     setBusy(false);
     setProgress("");
-    toast("Auto-run complete");
+    const failed = [...new Set(failures.map((f) => f.split(":")[0]))];
+    toast(
+      failed.length
+        ? `Auto-run complete — ${failed.join(", ")} returned nothing (see Settings)`
+        : "Auto-run complete across " + engs.join(", "),
+    );
     await reload();
     setView("capture");
   }
@@ -238,11 +254,21 @@ export default function CaptureView() {
         { brand_id: brand!.id, samples },
         RunBatchResponseSchema,
       );
-      toast(
-        j.ok
-          ? "Snapshot " + (j.label || "") + ": " + j.responses + " measurements"
-          : "Snapshot failed: " + (j.error || ""),
-      );
+      if (j.ok) {
+        const failed = j.failed_engines || [];
+        toast(
+          "Snapshot " +
+            (j.label || "") +
+            ": " +
+            j.responses +
+            " measurements across " +
+            (j.engines || []).join(", ") +
+            (failed.length ? ` — no results from ${failed.join(", ")}` : ""),
+        );
+        if (j.errors?.length) console.warn("geo-run-batch errors", j.errors);
+      } else {
+        toast("Snapshot failed: " + (j.detail || j.error || ""));
+      }
       await reload();
       setView("dashboard");
     } catch (e) {

@@ -6,6 +6,11 @@ import { z } from "zod";
 export const EngineStatusSchema = z.object({
   providers: z.record(z.string(), z.boolean()).optional(),
   engines: z.record(z.string(), z.boolean()).optional(),
+  // engine -> the edge-function secret that has to be set to make it live.
+  missing: z.record(z.string(), z.string()).optional(),
+  key_env: z.record(z.string(), z.string()).optional(),
+  models: z.record(z.string(), z.string()).optional(),
+  live_count: z.number().nullish(),
 });
 export type EngineStatusResp = z.infer<typeof EngineStatusSchema>;
 
@@ -27,7 +32,13 @@ export const RunResultSchema = z.object({
 export const RunResponseSchema = z.object({
   ok: z.boolean(),
   engine: z.string().nullish(),
+  provider: z.string().nullish(),
+  model: z.string().nullish(),
   error: z.string().nullish(),
+  // Verbatim provider error — the difference between "engine is off" and
+  // "the model id we ask for no longer exists".
+  detail: z.string().nullish(),
+  warnings: z.array(z.string()).nullish(),
   result: RunResultSchema.nullish(),
 });
 export type RunResponse = z.infer<typeof RunResponseSchema>;
@@ -39,7 +50,10 @@ export const RunBatchResponseSchema = z.object({
   prompts: z.number().nullish(),
   engines: z.array(z.string()).nullish(),
   responses: z.number().nullish(),
+  failed_engines: z.array(z.string()).nullish(),
+  errors: z.array(z.string()).nullish(),
   error: z.string().nullish(),
+  detail: z.string().nullish(),
 });
 export type RunBatchResponse = z.infer<typeof RunBatchResponseSchema>;
 
@@ -85,6 +99,7 @@ export const ListenResponseSchema = z.object({
   newsCount: z.number().nullish(),
   engines: z.array(z.string()).nullish(),
   questions: z.array(z.string()).nullish(),
+  errors: z.array(z.string()).nullish(),
   error: z.string().nullish(),
 });
 export type ListenResponse = z.infer<typeof ListenResponseSchema>;
