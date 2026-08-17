@@ -2,9 +2,7 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import type { Database } from "../database.types";
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+import { SUPABASE_ANON_KEY as anon, SUPABASE_URL as url } from "./config";
 
 let browserClient: ReturnType<typeof createBrowserClient<Database>> | undefined;
 
