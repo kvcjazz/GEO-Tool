@@ -49,3 +49,18 @@ reused untouched.
 - Optional roadmap (from the handoff): real per-client accounts + roles, branded
   PDF/report exports, moving AI logic into Next.js route handlers, adding the
   remaining engine API keys in Supabase.
+
+## 2026-10-21 — Measurement v2, steps 1–2
+
+- New `geo-measure` edge function (source in `supabase/functions/`): unprimed
+  question, provider web search on (OpenAI/xAI Responses `web_search`, Gemini
+  `google_search`, Claude `web_search` server tool; Perplexity always searches),
+  real citation URLs only, and code-based mention / competitor / own-site-cited /
+  evidence checks. Prominence, sentiment, accuracy: same engine, separate call.
+- DB (applied): `aliases` on `geo_brands` + `geo_competitors`; `answer`,
+  `web_search`, `method`, `model`, `raw` on `geo_responses`.
+- App: "Also known as" fields in Settings; Response Capture shows the full answer
+  and v2 web-search status; Auto-run goes through `MEASURE_FN` (still `geo-run`).
+- Not done: deploying `geo-measure`, a v1-vs-v2 comparison on live prompts,
+  moving `geo-run-batch` + cron to v2, re-baseline. Step 3 (independent judge +
+  client fact sheet) is next after that.

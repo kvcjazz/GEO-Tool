@@ -22,6 +22,11 @@ export const RunResultSchema = z.object({
   cited_sources: z.string().nullish(),
   samples: z.number().nullish(),
   confidence: z.string().nullish(),
+  // Measurement v2 (geo-measure) only.
+  method: z.string().nullish(),
+  model: z.string().nullish(),
+  web_search: z.boolean().nullish(),
+  runs: z.array(z.record(z.string(), z.unknown())).nullish(),
 });
 
 export const RunResponseSchema = z.object({

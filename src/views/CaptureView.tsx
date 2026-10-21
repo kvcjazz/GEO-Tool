@@ -6,6 +6,7 @@ import {
   ACC_OPTS,
   CITE_OPTS,
   ENGINES,
+  MEASURE_FN,
   PROM_OPTS,
   SENT_OPTS,
 } from "@/lib/constants";
@@ -13,6 +14,7 @@ import { computeAll } from "@/lib/scoring";
 import { r1 } from "@/lib/format";
 import { callFn } from "@/lib/callFn";
 import { RunBatchResponseSchema, RunResponseSchema } from "@/lib/schemas";
+import type { Json } from "@/lib/database.types";
 import type { Response } from "@/lib/types";
 
 function Dd({
@@ -170,12 +172,17 @@ export default function CaptureView() {
         setProgress(`⚡ ${done}/${total}…`);
         try {
           const j = await callFn(
-            "geo-run",
+            MEASURE_FN,
             {
               engine: eng,
               prompt: p.text,
               brand: brand!.name,
+              brand_aliases: brand!.aliases,
+              website: brand!.website,
               competitors: data.competitors.map((c) => c.name),
+              competitor_aliases: Object.fromEntries(
+                data.competitors.map((c) => [c.name, c.aliases]),
+              ),
               samples,
             },
             RunResponseSchema,
@@ -197,6 +204,11 @@ export default function CaptureView() {
             samples: o.samples || samples,
             mention_rate: o.mention_rate != null ? o.mention_rate : null,
             confidence: o.confidence || null,
+            answer: o.answer || null,
+            method: o.method || null,
+            model: o.model || null,
+            web_search: o.web_search ?? null,
+            raw: (o.runs as Json | undefined) ?? null,
           };
           const exRow = data.responses.find(
             (r) => r.prompt_id === p.id && r.engine === eng,
@@ -392,10 +404,33 @@ export default function CaptureView() {
                               </b>
                             </div>
                           )}
+                          {r.method === "v2" && (
+                            <div className="legend-note" style={{ margin: "0 0 6px" }}>
+                              Measurement v2 · {r.model || "—"} ·{" "}
+                              {r.web_search ? (
+                                <span className="tag t-yes">live web search</span>
+                              ) : (
+                                <span className="tag t-na">no web search</span>
+                              )}
+                            </div>
+                          )}
                           <b>Evidence — why this is scored this way:</b>
                           <div className="evidence" style={{ margin: "6px 0" }}>
                             {r.evidence || "(No evidence captured yet.)"}
                           </div>
+                          {r.answer && (
+                            <details style={{ margin: "6px 0" }}>
+                              <summary style={{ cursor: "pointer", fontSize: 12 }}>
+                                Full AI answer
+                              </summary>
+                              <div
+                                className="evidence"
+                                style={{ whiteSpace: "pre-wrap", marginTop: 6 }}
+                              >
+                                {r.answer}
+                              </div>
+                            </details>
+                          )}
                           {!ro && (
                             <>
                               <textarea

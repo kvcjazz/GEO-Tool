@@ -112,3 +112,9 @@ export const TITLES: Record<string, string> = {
 };
 
 export const CLIENT_VIEWS = ["dashboard", "backlog", "pr", "listening"];
+
+// Edge function Auto-run measures with. "geo-run" is measurement v1; switching
+// to "geo-measure" (v2: unprimed question, live web search, code-based mention
+// and citation checks) is a deliberate re-baseline — do it together with the
+// monthly snapshot, not on its own, so one run never mixes methods.
+export const MEASURE_FN: "geo-run" | "geo-measure" = "geo-run";

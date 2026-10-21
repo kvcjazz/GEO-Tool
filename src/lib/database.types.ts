@@ -798,6 +798,7 @@ export type Database = {
       }
       geo_brands: {
         Row: {
+          aliases: string[]
           archived: boolean
           audience: string | null
           created_at: string
@@ -820,6 +821,7 @@ export type Database = {
           website: string | null
         }
         Insert: {
+          aliases?: string[]
           archived?: boolean
           audience?: string | null
           created_at?: string
@@ -842,6 +844,7 @@ export type Database = {
           website?: string | null
         }
         Update: {
+          aliases?: string[]
           archived?: boolean
           audience?: string | null
           created_at?: string
@@ -896,16 +899,19 @@ export type Database = {
       }
       geo_competitors: {
         Row: {
+          aliases: string[]
           brand_id: string
           id: string
           name: string
         }
         Insert: {
+          aliases?: string[]
           brand_id: string
           id?: string
           name: string
         }
         Update: {
+          aliases?: string[]
           brand_id?: string
           id?: string
           name?: string
@@ -1305,6 +1311,7 @@ export type Database = {
       geo_responses: {
         Row: {
           accuracy: string | null
+          answer: string | null
           cited: string | null
           cited_pr_id: string | null
           cited_sources: string | null
@@ -1315,15 +1322,20 @@ export type Database = {
           id: string
           mention_rate: number | null
           mentioned: boolean
+          method: string | null
+          model: string | null
           notes: string | null
           prominence: string | null
           prompt_id: string
+          raw: Json | null
           run_id: string
           samples: number | null
           sentiment: string | null
+          web_search: boolean | null
         }
         Insert: {
           accuracy?: string | null
+          answer?: string | null
           cited?: string | null
           cited_pr_id?: string | null
           cited_sources?: string | null
@@ -1334,15 +1346,20 @@ export type Database = {
           id?: string
           mention_rate?: number | null
           mentioned?: boolean
+          method?: string | null
+          model?: string | null
           notes?: string | null
           prominence?: string | null
           prompt_id: string
+          raw?: Json | null
           run_id: string
           samples?: number | null
           sentiment?: string | null
+          web_search?: boolean | null
         }
         Update: {
           accuracy?: string | null
+          answer?: string | null
           cited?: string | null
           cited_pr_id?: string | null
           cited_sources?: string | null
@@ -1353,12 +1370,16 @@ export type Database = {
           id?: string
           mention_rate?: number | null
           mentioned?: boolean
+          method?: string | null
+          model?: string | null
           notes?: string | null
           prominence?: string | null
           prompt_id?: string
+          raw?: Json | null
           run_id?: string
           samples?: number | null
           sentiment?: string | null
+          web_search?: boolean | null
         }
         Relationships: [
           {
