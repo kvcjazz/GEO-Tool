@@ -66,6 +66,26 @@ Next.js app never needs them, it only calls the functions.
   `geo-listen`, `geo-engines`, `geo-advise`.
 - Two `pg_cron` jobs run monthly snapshots + listening scans server-side.
 
+### Measurement v2 (`geo-measure`)
+
+Source lives in `supabase/functions/` (the other functions exist only in the
+Supabase project). `geo-measure` asks each engine the buyer's question with no
+brand priming, with the provider's live web search switched on, and works out
+mention, competitor mentions, "client site cited" and the evidence quote in code
+(`_shared/measure.ts`). Prominence, sentiment and accuracy are still rated by the
+same engine, in a separate call that only sees the finished answer. Brands and
+competitors have an "Also known as" list in Settings for mention matching.
+
+v1 (`geo-run`) remains the live method until the switch-over: point
+`MEASURE_FN` in `src/lib/constants.ts` at `geo-measure` and move
+`geo-run-batch` (monthly snapshot) to it in the same release, then re-baseline.
+
+```bash
+cd supabase/functions
+deno test _shared/measure_test.ts   # deterministic checks
+deno check geo-measure/index.ts
+```
+
 The retired hosting hack (`geo_app` table + `geo-pilot`/`geo-publish`/`geo-diag`
 functions) is intentionally **not** used.
 

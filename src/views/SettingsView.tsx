@@ -9,7 +9,7 @@ import {
   PTYPES,
 } from "@/lib/constants";
 import { metricWeights, engineWeights } from "@/lib/scoring";
-import { stars, todayISO, monthLabel } from "@/lib/format";
+import { stars, todayISO, monthLabel, parseAliases } from "@/lib/format";
 import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
@@ -59,6 +59,7 @@ export default function SettingsView() {
     name: "",
     sector: "",
     website: "",
+    aliases: "",
     is_client: false,
   });
   const [mw, setMw] = useState<Record<string, number>>({});
@@ -98,6 +99,7 @@ export default function SettingsView() {
       name: brand.name || "",
       sector: brand.sector || "",
       website: brand.website || "",
+      aliases: (brand.aliases || []).join(", "),
       is_client: !!brand.is_client,
     });
     setMw(metricWeights(brand) as unknown as Record<string, number>);
@@ -146,6 +148,7 @@ export default function SettingsView() {
       name: details.name.trim(),
       sector: details.sector.trim(),
       website: details.website.trim() || null,
+      aliases: parseAliases(details.aliases),
       is_client: details.is_client,
     };
     const { error } = await sb.from("geo_brands").update(upd).eq("id", brand!.id);
@@ -207,6 +210,16 @@ export default function SettingsView() {
     if (error) return toast("Failed");
     setNewComp("");
     toast("Added");
+    await reload();
+  }
+
+  async function saveCompetitorAliases(id: string, raw: string) {
+    const aliases = parseAliases(raw);
+    const c = data.competitors.find((x) => x.id === id);
+    if (c && (c.aliases || []).join(", ") === aliases.join(", ")) return;
+    const { error } = await sb.from("geo_competitors").update({ aliases }).eq("id", id);
+    if (error) return toast("Save failed: " + error.message);
+    toast("Also-known-as saved");
     await reload();
   }
 
@@ -716,6 +729,12 @@ export default function SettingsView() {
             placeholder="https://clientsite.com"
             onChange={(e) => setDetails({ ...details, website: e.target.value })}
           />
+          <label>Also known as</label>
+          <input
+            value={details.aliases}
+            placeholder="e.g. Acme, Acme Corp (comma-separated)"
+            onChange={(e) => setDetails({ ...details, aliases: e.target.value })}
+          />
           <label className="flex" style={{ fontWeight: 500 }}>
             <input
               type="checkbox"
@@ -730,7 +749,8 @@ export default function SettingsView() {
           </button>
           <div className="legend-note">
             The website is the client&#39;s ground-truth domain — used to spot when their
-            own site is cited, and given to the AI for context.
+            own site is cited, and given to the AI for context. &quot;Also known as&quot;
+            lists other names the brand goes by, so a mention under any of them counts.
           </div>
         </div>
 
@@ -785,6 +805,15 @@ export default function SettingsView() {
                 data.competitors.map((c) => (
                   <tr key={c.id}>
                     <td>{c.name}</td>
+                    <td>
+                      <input
+                        key={(c.aliases || []).join(",")}
+                        defaultValue={(c.aliases || []).join(", ")}
+                        placeholder="Also known as…"
+                        title="Other names this competitor goes by (comma-separated)"
+                        onBlur={(e) => saveCompetitorAliases(c.id, e.target.value)}
+                      />
+                    </td>
                     <td style={{ textAlign: "right" }}>
                       <button
                         className="btn sm danger"

@@ -37,3 +37,13 @@ export function todayISO(): string {
 export function monthLabel(): string {
   return new Date().toISOString().slice(0, 7);
 }
+
+/** "Acme, Acme Corp; ACME" → ["Acme", "Acme Corp", "ACME"] (trimmed, de-duplicated). */
+export function parseAliases(s: string): string[] {
+  const out: string[] = [];
+  for (const a of s.split(/[,;\n]/)) {
+    const t = a.trim();
+    if (t && !out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
+}
