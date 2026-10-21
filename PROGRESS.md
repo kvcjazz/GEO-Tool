@@ -64,3 +64,20 @@ reused untouched.
 - Not done: deploying `geo-measure`, a v1-vs-v2 comparison on live prompts,
   moving `geo-run-batch` + cron to v2, re-baseline. Step 3 (independent judge +
   client fact sheet) is next after that.
+
+### 2026-10-21 — v1 vs v2 test (Luminous PR, 28 prompts, 1 sample, ChatGPT + Claude)
+
+- `geo-measure` deployed (verify_jwt on). Test called it via pg_net; nothing
+  written to client data.
+- Unbranded prompts: v2 mentions Luminous PR in 0/18 (ChatGPT) and 1/16 (Claude)
+  answers; v1's October run had ChatGPT "Recommended" it on all 4 unbranded
+  prompts it measured — the brand-priming effect.
+- Branded prompts: mentioned 10/10 (ChatGPT) and 9/9 (Claude), luminouspr.com
+  cited in most.
+- Competitor mentions 0 in v2: answers write "Tyto"/"Ballou" without "PR", so
+  competitor aliases are needed.
+- Gemini (quota exceeded) and Perplexity (out of credits) fail with billing
+  errors — also affects v1 monthly snapshots.
+- Open issues before switch-over: 3/28 Claude calls exceeded 150 s (search is
+  slow — cap searches or use the basic tool); check whether Claude's source list
+  falls back to every page read rather than only cited pages.
