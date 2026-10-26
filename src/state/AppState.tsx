@@ -12,7 +12,8 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { callFn } from "@/lib/callFn";
-import { EngineStatusSchema } from "@/lib/schemas";
+import { ClassifySourcesSchema, EngineStatusSchema } from "@/lib/schemas";
+import { gapSources } from "@/lib/sources";
 import { AREAS, CLIENT_AREAS, LEGACY_VIEWS } from "@/lib/constants";
 import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
@@ -34,6 +35,7 @@ import type {
   RadarItem,
   Response,
   Run,
+  SourceKind,
 } from "@/lib/types";
 
 type BrandData = {
@@ -44,6 +46,8 @@ type BrandData = {
   responses: Response[];
   /** Scoring fields of earlier runs measured the same way as the current one. */
   history: Record<string, Scorable[]>;
+  /** What each cited site is to this client, keyed by domain. */
+  sourceKinds: Record<string, SourceKind>;
   sov: { player: string; mentions: number }[];
   opps: Opportunity[];
   pr: PrActivity[];
@@ -62,6 +66,7 @@ const EMPTY: BrandData = {
   currentRun: null,
   responses: [],
   history: {},
+  sourceKinds: {},
   sov: [],
   opps: [],
   pr: [],
@@ -112,6 +117,10 @@ type Ctx = {
   buildFeasibilityMemory: () => Promise<MemoryOutlet[]>;
   patchBrand: (patch: Partial<Brand>) => void;
   patchResponse: (id: string, patch: Partial<Response>) => void;
+  /** Record (or correct) what a cited site is to the selected client. */
+  setSourceKind: (domain: string, kind: string, label?: string | null) => Promise<void>;
+  /** True while cited sites are being classified. */
+  classifying: boolean;
 
   /** Queued measurements for the current run, kept fresh while any are in flight. */
   jobs: MeasureJob[];
@@ -119,6 +128,8 @@ type Ctx = {
   startSnapshot: () => Promise<void>;
   /** Re-measure the current check (or start a new one if it used the old method). */
   remeasure: () => Promise<void>;
+  /** Measure only questions the current check has no answers for yet. */
+  measureNewQuestions: () => Promise<void>;
 
   toast: (m: string) => void;
   toastMsg: string;
@@ -229,6 +240,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         media,
         radar,
         news,
+        kinds,
       ] = await Promise.all([
         sb.from("geo_competitors").select("*").eq("brand_id", id),
         sb.from("geo_prompts").select("*").eq("brand_id", id).order("sort"),
@@ -261,6 +273,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           .eq("brand_id", id)
           .order("created_at", { ascending: false })
           .limit(20),
+        sb.from("geo_source_kinds").select("*").eq("brand_id", id),
       ]);
 
       const allNews = (news.data || []) as NewsItem[];
@@ -314,6 +327,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         currentRun,
         responses,
         history,
+        sourceKinds: Object.fromEntries(
+          ((kinds.data || []) as SourceKind[]).map((k) => [k.domain, k]),
+        ),
         sov,
         opps: (opps.data || []) as Opportunity[],
         pr: (pr.data || []) as PrActivity[],
@@ -428,6 +444,97 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     toast(n ? n + " measurements queued" : "Already measuring — nothing new queued");
     setJobsKey((k) => k + 1);
   }, [brand, data.currentRun, data.prompts, samples, sb, toast, startSnapshot]);
+
+  const measureNewQuestions = useCallback(async () => {
+    const run = data.currentRun;
+    if (!run || run.method !== "v2") return;
+    const { data: n, error } = await sb.rpc("geo_enqueue_run", {
+      rid: run.id,
+      p_samples: samples,
+      p_only_new: true,
+    });
+    if (error) return toast("Couldn't start measuring: " + error.message);
+    toast(n ? n + " measurements queued for the new questions" : "Nothing new to measure");
+    setJobsKey((k) => k + 1);
+  }, [data.currentRun, samples, sb, toast]);
+
+  // ---- Cited-site classification --------------------------------------------
+  // The sites answers cite are classified once per client (competitor,
+  // publication, directory…) so competitors drop out of "where to earn
+  // coverage". Runs in the background for unclassified gap sites, at most once
+  // per client and domain per session.
+  const [classifying, setClassifying] = useState(false);
+  const attempted = useRef<Set<string>>(new Set());
+
+  const saveKinds = useCallback(
+    async (rows: { domain: string; kind: string; label?: string | null; source: string }[]) => {
+      const b = brand;
+      if (!b || !rows.length) return;
+      const now = new Date().toISOString();
+      const payload = rows.map((r) => ({
+        brand_id: b.id,
+        domain: r.domain,
+        kind: r.kind,
+        label: r.label ?? null,
+        source: r.source,
+        updated_at: now,
+      }));
+      const { data: saved, error } = await sb
+        .from("geo_source_kinds")
+        .upsert(payload, { onConflict: "brand_id,domain" })
+        .select("*");
+      if (error) return toast("Couldn't save site types: " + error.message);
+      setData((prev) => ({
+        ...prev,
+        sourceKinds: {
+          ...prev.sourceKinds,
+          ...Object.fromEntries(((saved || []) as SourceKind[]).map((k) => [k.domain, k])),
+        },
+      }));
+    },
+    [brand, sb, toast],
+  );
+
+  const setSourceKind = useCallback(
+    (domain: string, kind: string, label?: string | null) =>
+      saveKinds([{ domain, kind, label, source: "team" }]),
+    [saveKinds],
+  );
+
+  useEffect(() => {
+    const b = brand;
+    if (!b || mode !== "team" || classifying) return;
+    const todo = gapSources(b, data.responses)
+      .map((s) => s.domain)
+      .filter((d) => !data.sourceKinds[d] && !attempted.current.has(b.id + "|" + d))
+      .slice(0, 60);
+    if (!todo.length) return;
+    const timer = setTimeout(async () => {
+      todo.forEach((d) => attempted.current.add(b.id + "|" + d));
+      setClassifying(true);
+      try {
+        const j = await callFn(
+          "geo-classify-sources",
+          {
+            brand: b.name,
+            website: b.website,
+            sector: b.sector,
+            positioning: b.positioning,
+            competitors: data.competitors.map((c) => c.name),
+            domains: todo,
+          },
+          ClassifySourcesSchema,
+        );
+        if (j.ok && j.sites?.length) {
+          await saveKinds(j.sites.map((x) => ({ ...x, source: "ai" })));
+        }
+      } catch {
+        /* classification is best-effort; the list still works without it */
+      }
+      setClassifying(false);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [brand, mode, classifying, data.responses, data.sourceKinds, data.competitors, saveKinds]);
 
   const loadEngines = useCallback(async () => {
     try {
@@ -562,6 +669,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     jobs,
     startSnapshot,
     remeasure,
+    measureNewQuestions,
+    setSourceKind,
+    classifying,
     toast,
     toastMsg,
     toastShow,

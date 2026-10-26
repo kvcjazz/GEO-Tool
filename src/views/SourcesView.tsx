@@ -2,14 +2,28 @@
 
 import { useAppState } from "@/state/AppState";
 import { host } from "@/lib/format";
-import { citedSources, gapSources, isOwnSite } from "@/lib/sources";
+import { KIND_LABELS, citedSources, gapSources, isOwnSite, isTarget as notCompetitor } from "@/lib/sources";
 
 export default function SourcesView() {
-  const { brand, data, mode, sb, toast, reload } = useAppState();
+  const { brand, data, mode, sb, toast, reload, setSourceKind, classifying } = useAppState();
   if (!brand) return null;
   const ro = mode === "client";
+  const kinds = data.sourceKinds;
   const rows = citedSources(data.responses);
-  const gaps = gapSources(brand, data.responses);
+  const allGaps = gapSources(brand, data.responses);
+  // A client won't be covered on a competitor's own site, so those aren't targets.
+  const gaps = allGaps.filter((g) => notCompetitor(g.domain, kinds));
+  const competitorGaps = allGaps.filter((g) => !notCompetitor(g.domain, kinds));
+  const kindNote = (d: string) => {
+    const k = kinds[d];
+    if (!k) return null;
+    return (
+      <span className="muted" style={{ fontSize: 12 }}>
+        {" "}
+        · {k.label || KIND_LABELS[k.kind] || k.kind}
+      </span>
+    );
+  };
 
   const mediaNames = data.media.map((m) => (m.outlet || "").toLowerCase());
   const coverageHosts = new Set(data.pr.map((p) => host(p.url)).filter(Boolean));
@@ -28,6 +42,8 @@ export default function SourcesView() {
       <span className="tag t-yes">Your site</span>
     ) : isCoverage(d) ? (
       <span className="tag t-pos">Your coverage</span>
+    ) : kinds[d]?.kind === "competitor" ? (
+      <span className="tag t-no">Competitor</span>
     ) : isTarget(d) ? (
       <span className="badge">Target outlet</span>
     ) : (
@@ -83,6 +99,7 @@ export default function SourcesView() {
                   <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
                     {r.domain}
                   </a>
+                  {kindNote(r.domain)}
                 </td>
                 <td>
                   <b>{r.count}</b>
@@ -99,8 +116,9 @@ export default function SourcesView() {
       <div className="card">
         <h3>Where to earn coverage</h3>
         <div className="legend-note" style={{ marginTop: 0, marginBottom: 10 }}>
-          Sites the engines cite when they answer without naming {brand.name} — the clearest
-          places to aim earned coverage.
+          Sites the engines cite when they answer without naming {brand.name}, leaving out
+          competitors&#39; own sites — the clearest places to aim earned coverage.
+          {classifying && <> Checking which sites are competitors…</>}
         </div>
         <table>
           <tbody>
@@ -110,7 +128,8 @@ export default function SourcesView() {
                   <td>
                     <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
                       {r.domain}
-                    </a>{" "}
+                    </a>
+                    {kindNote(r.domain)}{" "}
                     {isCoverage(r.domain) && <span className="tag t-pos">Your coverage</span>}
                   </td>
                   <td style={{ textAlign: "right" }}>
@@ -130,7 +149,15 @@ export default function SourcesView() {
                         >
                           Add to plan
                         </button>
-                      )}
+                      )}{" "}
+                      <button
+                        type="button"
+                        className="btn sm ghost"
+                        title="Mark as a competitor's site and leave it out of this list"
+                        onClick={() => setSourceKind(r.domain, "competitor", "Competitor")}
+                      >
+                        Competitor
+                      </button>
                     </td>
                   )}
                 </tr>
@@ -144,6 +171,39 @@ export default function SourcesView() {
             )}
           </tbody>
         </table>
+        {competitorGaps.length > 0 && (
+          <details style={{ marginTop: 12 }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              Competitor sites left out ({competitorGaps.length})
+            </summary>
+            <table style={{ marginTop: 6 }}>
+              <tbody>
+                {competitorGaps.map((r) => (
+                  <tr key={r.domain}>
+                    <td>
+                      <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
+                        {r.domain}
+                      </a>
+                      {kindNote(r.domain)}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{r.count}</td>
+                    {!ro && (
+                      <td style={{ textAlign: "right", width: 1, whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          className="btn sm ghost"
+                          onClick={() => setSourceKind(r.domain, "other", null)}
+                        >
+                          Not a competitor
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
       </div>
     </div>
   );

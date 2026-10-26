@@ -12,7 +12,7 @@ import {
 } from "@/lib/scoring";
 import { r1, sum } from "@/lib/format";
 import { reachSplit } from "@/lib/questions";
-import { gapSources } from "@/lib/sources";
+import { gapSources, isTarget } from "@/lib/sources";
 import type { Run } from "@/lib/types";
 import type { DateRange } from "@/lib/types";
 
@@ -129,7 +129,10 @@ export default function DashboardView() {
 
   const client = mode === "client";
   const reach = reachSplit(brand, data.prompts, responses);
-  const gaps = gapSources(brand, responses).slice(0, 3);
+  // Competitors' own sites aren't realistic targets, so they're left out.
+  const gaps = gapSources(brand, responses)
+    .filter((g) => isTarget(g.domain, data.sourceKinds))
+    .slice(0, 3);
   const topActions = data.opps
     .filter((o) => o.status !== "Done")
     .map((o) => ({ ...o, prio: o.effort ? o.impact / o.effort : 0 }))

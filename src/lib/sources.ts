@@ -1,5 +1,5 @@
 import { host } from "./format";
-import type { Brand, Response } from "./types";
+import type { Brand, Response, SourceKind } from "./types";
 
 // Which sites the AI engines cite, from each answer's recorded cited sources.
 
@@ -50,4 +50,20 @@ export function gapSources(brand: Brand, responses: Response[]): SourceRow[] {
   return citedSources(responses.filter((r) => !r.mentioned)).filter(
     (s) => !isOwnSite(s.domain, brand),
   );
+}
+
+/** The kinds a site can be classified as (see geo-classify-sources). */
+export const KIND_LABELS: Record<string, string> = {
+  competitor: "Competitor",
+  media: "Publication",
+  directory: "Directory / ranking",
+  review: "Review site",
+  community: "Community",
+  academic: "Academic",
+  other: "Other",
+};
+
+/** A site the client could realistically earn coverage on (not a competitor's). */
+export function isTarget(domain: string, kinds: Record<string, SourceKind>): boolean {
+  return kinds[domain]?.kind !== "competitor";
 }
