@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAppState } from "@/state/AppState";
-import { StrategyBanner, Kpi } from "@/components/ui";
+import { Kpi } from "@/components/ui";
 import { prAttribution } from "@/lib/scoring";
 import { host, todayISO } from "@/lib/format";
 
@@ -57,7 +57,7 @@ export default function PRView() {
       toast(
         linked
           ? "Linked " + linked + " citation" + (linked > 1 ? "s" : "") + " to PR"
-          : "No new citations matched (record cited sources in Response Capture first)",
+          : "No new citations matched (sources are recorded by each monthly check)",
       );
     await reload();
   }
@@ -102,12 +102,6 @@ export default function PRView() {
 
   return (
     <>
-      <StrategyBanner />
-      <div className="sec-title">PR &amp; Influence — {brand.name}</div>
-      <div className="sec-sub">
-        See exactly which earned PR the AI engines are citing, and how it lifts the
-        client&#39;s visibility.
-      </div>
       <div className="kpi-row" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
         <Kpi l="PR placements" v={data.pr.length} />
         <Kpi l="Tier-1 placements" v={t1} />
@@ -138,7 +132,7 @@ export default function PRView() {
               <th>Tier</th>
               <th>Theme</th>
               <th>AI citation</th>
-              <th>Cited in (engine · prompt)</th>
+              <th>Cited in (engine · question)</th>
               {!ro && <th></th>}
             </tr>
           </thead>
@@ -234,7 +228,7 @@ export default function PRView() {
       )}
 
       {!ro && (
-        <div className="card" style={{ marginTop: 16 }}>
+        <div id="log-placement" className="card" style={{ marginTop: 16, scrollMarginTop: 80 }}>
           <h3>Log a PR placement</h3>
           <div className="set-grid">
             <div>

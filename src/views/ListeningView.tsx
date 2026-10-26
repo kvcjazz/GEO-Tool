@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAppState } from "@/state/AppState";
-import { StrategyBanner, Kpi } from "@/components/ui";
+import { Kpi } from "@/components/ui";
 import { todayISO } from "@/lib/format";
 import { callFn } from "@/lib/callFn";
 import { ListenResponseSchema } from "@/lib/schemas";
@@ -39,7 +39,7 @@ export default function ListeningView() {
       !window.confirm(
         "Scan the live AI engines and news for new mentions of " +
           brand!.name +
-          " outside your prompt set? This uses your AI credit and can take up to a minute.",
+          " outside your tracked questions? This uses your AI credit and can take up to a minute.",
       )
     )
       return;
@@ -104,19 +104,13 @@ export default function ListeningView() {
 
   return (
     <>
-      <StrategyBanner />
-      <div className="sec-title">Listening — {brand.name}</div>
-      <div className="sec-sub">
-        Brand mentions found in AI answers and live news <b>outside</b> the fixed prompt
-        set — so you never miss organic visibility or context the prompts don&#39;t cover.
-      </div>
       {mode === "team" && (
         <div style={{ marginBottom: 14 }}>
           <button className="btn" onClick={scanMentions} disabled={busy}>
             {busy ? "🔎 Scanning…" : "🔎 Scan for mentions"}
           </button>{" "}
           <span className="muted" style={{ fontSize: 12 }}>
-            Asks the live AI engines open discovery questions (not your prompt set) and
+            Asks the live AI engines open discovery questions (not the tracked questions) and
             scans the last 30 days of news for “{brand.name}”, then logs new mentions.
             Uses your AI credit.
           </span>
@@ -185,7 +179,7 @@ export default function ListeningView() {
           </tbody>
         </table>
         <div className="legend-note">
-          <b>Why this matters:</b> prompt-based capture only sees what you ask. Listening
+          <b>Why this matters:</b> the monthly check only sees the questions we track. Listening
           records mentions discovered anywhere — an unprompted AI recommendation, a news
           story — so the team spots reputation, context and risk early. <b>Now live:</b>{" "}
           click <b>Scan for mentions</b> to pull real results, and a scheduled scan runs

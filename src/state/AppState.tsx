@@ -13,7 +13,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { callFn } from "@/lib/callFn";
 import { EngineStatusSchema } from "@/lib/schemas";
-import { CLIENT_VIEWS } from "@/lib/constants";
+import { AREAS, CLIENT_AREAS, LEGACY_VIEWS } from "@/lib/constants";
+import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
 import type { Scorable } from "@/lib/scoring";
 import type {
@@ -22,6 +23,7 @@ import type {
   ContextItem,
   DateRange,
   EngineStatus,
+  MeasureJob,
   MediaTarget,
   Mention,
   MemoryOutlet,
@@ -72,6 +74,7 @@ const EMPTY: BrandData = {
 };
 
 export type Mode = "team" | "client";
+export type AnswersFilter = "all" | "unbranded" | "branded";
 
 type Ctx = {
   ready: boolean;
@@ -79,7 +82,12 @@ type Ctx = {
   sb: ReturnType<typeof getSupabaseBrowserClient>;
 
   mode: Mode;
-  view: string;
+  /** The area on screen (already limited to client areas in client view). */
+  view: AreaId;
+  /** The sub-tab on screen for areas that have tabs, else "". */
+  tab: string;
+  /** Answers tab filter: all questions, ones that don't name the client, or ones that do. */
+  answersFilter: AnswersFilter;
   samples: number;
   dateRange: DateRange;
 
@@ -92,7 +100,9 @@ type Ctx = {
 
   setMode: (m: Mode) => void;
   toggleMode: () => void;
-  setView: (v: string) => void;
+  /** Go to an area (or an old tab id, which maps to its new home), optionally a tab. */
+  setView: (v: string, tab?: string) => void;
+  setAnswersFilter: (f: AnswersFilter) => void;
   setSamples: (n: number) => void;
   setDateRange: (d: DateRange) => void;
 
@@ -102,6 +112,13 @@ type Ctx = {
   buildFeasibilityMemory: () => Promise<MemoryOutlet[]>;
   patchBrand: (patch: Partial<Brand>) => void;
   patchResponse: (id: string, patch: Partial<Response>) => void;
+
+  /** Queued measurements for the current run, kept fresh while any are in flight. */
+  jobs: MeasureJob[];
+  /** Start a fresh monthly check (v2) for the selected client. */
+  startSnapshot: () => Promise<void>;
+  /** Re-measure the current check (or start a new one if it used the old method). */
+  remeasure: () => Promise<void>;
 
   toast: (m: string) => void;
   toastMsg: string;
@@ -128,7 +145,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<Mode>(
     searchParams.get("view") === "client" ? "client" : "team",
   );
-  const [view, setViewState] = useState("dashboard");
+  const [viewState, setViewState] = useState<AreaId>("overview");
+  const [tabs, setTabs] = useState<Record<string, string>>({});
+  const [answersFilter, setAnswersFilter] = useState<AnswersFilter>("all");
   const [samples, setSamples] = useState(3);
   const [dateRange, setDateRange] = useState<DateRange>({
     mode: "all",
@@ -158,25 +177,28 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     toastTimer.current = setTimeout(() => setToastShow(false), 2200);
   }, []);
 
-  const setView = useCallback(
-    (v: string) => {
-      // In client mode only the client views are reachable.
-      if (mode === "client" && !CLIENT_VIEWS.includes(v)) v = "dashboard";
-      setViewState(v);
-    },
-    [mode],
-  );
+  const setView = useCallback((v: string, tab?: string) => {
+    const legacy = LEGACY_VIEWS[v];
+    const area = legacy?.area ?? (AREAS.some((a) => a.id === v) ? (v as AreaId) : "overview");
+    const t = tab ?? legacy?.tab;
+    setViewState(area);
+    if (t) setTabs((prev) => ({ ...prev, [area]: t }));
+  }, []);
 
   const toggleMode = useCallback(() => {
     setMode((prev) => (prev === "team" ? "client" : "team"));
   }, []);
 
-  // When switching to client mode from a team-only view, drop back to dashboard.
-  useEffect(() => {
-    if (mode === "client" && !CLIENT_VIEWS.includes(view)) {
-      setViewState("dashboard");
-    }
-  }, [mode, view]);
+  // Client view only reaches client areas, and Plan shows just the action plan.
+  const view: AreaId =
+    mode === "client" && !CLIENT_AREAS.includes(viewState) ? "overview" : viewState;
+  const areaTabs = AREAS.find((a) => a.id === view)?.tabs || [];
+  const tab =
+    mode === "client" && view === "plan"
+      ? "actions"
+      : areaTabs.some((t) => t.id === tabs[view])
+        ? tabs[view]
+        : areaTabs[0]?.id || "";
 
   const patchResponse = useCallback((id: string, patch: Partial<Response>) => {
     setData((prev) => ({
@@ -331,6 +353,82 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     if (brandIdRef.current) await selectBrand(brandIdRef.current);
   }, [selectBrand]);
 
+  // ---- Measurement queue ----------------------------------------------------
+  const [jobs, setJobs] = useState<MeasureJob[]>([]);
+  const [jobsKey, setJobsKey] = useState(0);
+  const runId = data.currentRun?.id;
+
+  // Follow the current run's queued measurements: poll while any are waiting
+  // or in flight, and reload results each time more of them finish.
+  useEffect(() => {
+    let stopped = false;
+    let lastFinished = -1;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (!runId) {
+        setJobs([]);
+        return;
+      }
+      const { data: rows } = await sb.from("geo_measure_jobs").select("*").eq("run_id", runId);
+      if (stopped) return;
+      const list = (rows || []) as MeasureJob[];
+      setJobs(list);
+      const finished = list.filter((j) => j.status === "done").length;
+      if (lastFinished >= 0 && finished !== lastFinished) await reload();
+      lastFinished = finished;
+      if (!stopped && list.some((j) => j.status === "pending" || j.status === "sent")) {
+        timer = setTimeout(tick, 8000);
+      }
+    };
+    timer = setTimeout(tick, 0);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [sb, runId, reload, jobsKey]);
+
+  const startSnapshot = useCallback(async () => {
+    const b = brand;
+    if (!b) return;
+    if (
+      !window.confirm(
+        "Run a new monthly check for " +
+          b.name +
+          "? Every active question is put to every live AI engine " +
+          samples +
+          "× with live web search. Results arrive over the next 10–20 minutes. Uses your AI credit.",
+      )
+    )
+      return;
+    const { error } = await sb.rpc("geo_start_snapshot", { bid: b.id, p_samples: samples });
+    if (error) return toast("Monthly check failed to start: " + error.message);
+    toast("Monthly check started — results arrive over the next 10–20 minutes");
+    await reload();
+    setJobsKey((k) => k + 1);
+  }, [brand, samples, sb, toast, reload]);
+
+  const remeasure = useCallback(async () => {
+    const run = data.currentRun;
+    if (!brand || !run) return toast("No current check for this client");
+    if (!data.prompts.some((p) => p.active)) return toast("No active questions to measure");
+    if (run.method !== "v2") {
+      // Never mix methods inside one check: start a new-method check instead.
+      return startSnapshot();
+    }
+    if (
+      !window.confirm(
+        "Re-measure every active question on every live AI engine, " +
+          samples +
+          " samples each? Results update as they come in (usually 10–20 minutes). Uses your AI credit.",
+      )
+    )
+      return;
+    const { data: n, error } = await sb.rpc("geo_enqueue_run", { rid: run.id, p_samples: samples });
+    if (error) return toast("Re-measure failed: " + error.message);
+    toast(n ? n + " measurements queued" : "Already measuring — nothing new queued");
+    setJobsKey((k) => k + 1);
+  }, [brand, data.currentRun, data.prompts, samples, sb, toast, startSnapshot]);
+
   const loadEngines = useCallback(async () => {
     try {
       const j = await callFn("geo-engines", {}, EngineStatusSchema);
@@ -439,6 +537,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     sb,
     mode,
     view,
+    tab,
+    answersFilter,
     samples,
     dateRange,
     brands,
@@ -450,6 +550,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setMode,
     toggleMode,
     setView,
+    setAnswersFilter,
     setSamples,
     setDateRange,
     selectBrand,
@@ -458,6 +559,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     buildFeasibilityMemory,
     patchBrand,
     patchResponse,
+    jobs,
+    startSnapshot,
+    remeasure,
     toast,
     toastMsg,
     toastShow,

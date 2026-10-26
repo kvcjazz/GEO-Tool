@@ -1,7 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useAppState } from "@/state/AppState";
+import type { AnswersFilter } from "@/state/AppState";
 import {
   ACC_OPTS,
   CITE_OPTS,
@@ -11,7 +12,8 @@ import {
 } from "@/lib/constants";
 import { computeAll } from "@/lib/scoring";
 import { r1 } from "@/lib/format";
-import type { MeasureJob, Response } from "@/lib/types";
+import { namesBrand } from "@/lib/questions";
+import type { Prompt, Response } from "@/lib/types";
 
 function Dd({
   value,
@@ -36,93 +38,83 @@ function Dd({
   );
 }
 
+const engineOrder = (e: string) => ENGINES.indexOf(e as (typeof ENGINES)[number]);
+
+type Group = {
+  prompt: Prompt;
+  rows: Response[];
+  named: number;
+  branded: boolean;
+};
+
 export default function CaptureView() {
-  const {
-    brand,
-    data,
-    mode,
-    samples,
-    sb,
-    toast,
-    reload,
-    patchResponse,
-  } = useAppState();
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const { brand, data, mode, sb, toast, patchResponse, jobs, answersFilter, setAnswersFilter } =
+    useAppState();
+  const [openQ, setOpenQ] = useState<Set<string>>(new Set());
+  const [openR, setOpenR] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState(false);
   const [ev, setEv] = useState<
     Record<string, { evidence: string; cited_sources: string; cited_pr_id: string }>
   >({});
-  const [jobs, setJobs] = useState<MeasureJob[]>([]);
-  const [pollKey, setPollKey] = useState(0);
-  const runId = data.currentRun?.id;
 
-  // Follow this run's queued measurements: poll while any are waiting or in
-  // flight, and reload results each time more of them finish.
-  useEffect(() => {
-    if (!runId) return;
-    let stopped = false;
-    let lastFinished = -1;
-    let timer: ReturnType<typeof setTimeout>;
-    const tick = async () => {
-      const { data: rows } = await sb
-        .from("geo_measure_jobs")
-        .select("*")
-        .eq("run_id", runId);
-      if (stopped) return;
-      const list = (rows || []) as MeasureJob[];
-      setJobs(list);
-      const finished = list.filter((j) => j.status === "done").length;
-      if (lastFinished >= 0 && finished !== lastFinished) await reload();
-      lastFinished = finished;
-      if (!stopped && list.some((j) => j.status === "pending" || j.status === "sent")) {
-        timer = setTimeout(tick, 8000);
-      }
-    };
-    timer = setTimeout(tick, 0);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [sb, runId, reload, pollKey]);
-
-  const byP = useMemo(() => {
-    const m: Record<string, (typeof data.prompts)[number]> = {};
-    data.prompts.forEach((p) => (m[p.id] = p));
-    return m;
-  }, [data.prompts]);
-
-  const rows = useMemo(() => {
-    return [...data.responses].sort((a, b) => {
-      const pa = byP[a.prompt_id]?.sort ?? 0;
-      const pb = byP[b.prompt_id]?.sort ?? 0;
-      return pa !== pb
-        ? pa - pb
-        : ENGINES.indexOf(a.engine as (typeof ENGINES)[number]) -
-            ENGINES.indexOf(b.engine as (typeof ENGINES)[number]);
-    });
-  }, [data.responses, byP]);
+  // One group per tracked question, in prompt order, engines in display order.
+  const groups = useMemo<Group[]>(() => {
+    if (!brand) return [];
+    const byPrompt: Record<string, Response[]> = {};
+    for (const r of data.responses) (byPrompt[r.prompt_id] ||= []).push(r);
+    return [...data.prompts]
+      .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+      .filter((p) => byPrompt[p.id]?.length)
+      .map((p) => {
+        const rows = byPrompt[p.id].sort((a, b) => engineOrder(a.engine) - engineOrder(b.engine));
+        return {
+          prompt: p,
+          rows,
+          named: rows.filter((r) => r.mentioned).length,
+          branded: namesBrand(p.text, brand),
+        };
+      });
+  }, [brand, data.prompts, data.responses]);
 
   if (!brand) return null;
   const ro = mode === "client";
+  const canEdit = !ro && editing;
 
-  function toggle(id: string) {
-    setExpanded((prev) => {
+  const shown = groups.filter(
+    (g) => answersFilter === "all" || (answersFilter === "branded") === g.branded,
+  );
+  const chips: [AnswersFilter, string][] = [
+    ["all", `All questions (${groups.length})`],
+    ["unbranded", `Don't mention ${brand.name} (${groups.filter((g) => !g.branded).length})`],
+    ["branded", `Ask about ${brand.name} by name (${groups.filter((g) => g.branded).length})`],
+  ];
+
+  const inFlight = jobs.filter((j) => j.status === "pending" || j.status === "sent").length;
+  const failed = jobs.filter((j) => j.status === "failed");
+  const skipped = [...new Set(jobs.filter((j) => j.status === "skipped").map((j) => j.engine))];
+
+  const toggleSet = (setter: typeof setOpenQ, id: string) =>
+    setter((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
-    setEv((prev) => {
-      if (prev[id]) return prev;
-      const r = data.responses.find((x) => x.id === id);
-      return {
-        ...prev,
-        [id]: {
-          evidence: r?.evidence || "",
-          cited_sources: r?.cited_sources || "",
-          cited_pr_id: r?.cited_pr_id || "",
-        },
-      };
-    });
+
+  function openDetail(r: Response) {
+    toggleSet(setOpenR, r.id);
+    setEv((prev) =>
+      prev[r.id]
+        ? prev
+        : {
+            ...prev,
+            [r.id]: {
+              evidence: r.evidence || "",
+              cited_sources: r.cited_sources || "",
+              cited_pr_id: r.cited_pr_id || "",
+            },
+          },
+    );
   }
 
   async function onCellEdit(id: string, field: keyof Response, raw: string) {
@@ -139,11 +131,9 @@ export default function CaptureView() {
       toast("Save failed");
       return;
     }
-    const updated = data.responses.map((r) =>
-      r.id === id ? { ...r, [field]: v } : r,
-    );
+    const updated = data.responses.map((r) => (r.id === id ? { ...r, [field]: v } : r));
     const { blended } = computeAll(brand!, updated as Response[]);
-    toast("Saved · GEO now " + r1(blended.geo));
+    toast("Saved · GEO score now " + r1(blended.geo));
   }
 
   async function saveEvidence(id: string) {
@@ -162,93 +152,210 @@ export default function CaptureView() {
     toast(error ? "Save failed" : "Saved");
   }
 
-  async function startSnapshot() {
-    const { error } = await sb.rpc("geo_start_snapshot", {
-      bid: brand!.id,
-      p_samples: samples,
-    });
-    if (error) return toast("Snapshot failed: " + error.message);
-    toast("Snapshot started — results arrive over the next 10–20 minutes");
-    await reload();
-    setPollKey((k) => k + 1);
-  }
+  const namedTag = (g: Group) => (
+    <span
+      className={`tag ${g.named === 0 ? "t-no" : g.named === g.rows.length ? "t-yes" : "t-na"}`}
+    >
+      {g.named} of {g.rows.length} engines
+    </span>
+  );
 
-  async function autoRun() {
-    if (mode !== "team") return;
-    if (!data.prompts.some((p) => p.active)) return toast("No active prompts to run");
-    if (!data.currentRun) return toast("No current run for this brand");
-    if (data.currentRun.method !== "v2") {
-      // Never mix methods inside one run: start a new-method run instead.
-      if (
-        window.confirm(
-          "This run used the old measurement method, so new results can't be added to " +
-            "it. Start a new snapshot with the new method instead? Uses your AI credit.",
-        )
-      )
-        await startSnapshot();
-      return;
-    }
-    if (
-      !window.confirm(
-        "Re-measure every active prompt on every live AI engine, " +
-          samples +
-          " samples each? Results update here as they come in (usually 10–20 minutes). " +
-          "Uses your AI credit.",
-      )
-    )
-      return;
-    const { data: n, error } = await sb.rpc("geo_enqueue_run", {
-      rid: data.currentRun.id,
-      p_samples: samples,
-    });
-    if (error) return toast("Auto-run failed: " + error.message);
-    toast(n ? n + " measurements queued" : "Already measuring — nothing new queued");
-    setPollKey((k) => k + 1);
-  }
+  const ratingCell = (
+    r: Response,
+    field: "prominence" | "sentiment" | "accuracy" | "cited",
+    opts: string[],
+    na?: boolean,
+  ) =>
+    canEdit ? (
+      <Dd value={r[field]} opts={opts} na={na} onChange={(v) => onCellEdit(r.id, field, v)} />
+    ) : (
+      <span>{r[field] || "—"}</span>
+    );
 
-  async function newSnapshot() {
-    if (mode !== "team") return;
-    if (
-      !window.confirm(
-        "Create a fresh monthly snapshot for " +
-          brand!.name +
-          "? This starts a new run and measures all active prompts on every live AI " +
-          "engine. Uses your AI credit.",
-      )
-    )
-      return;
-    await startSnapshot();
+  function engineRows(g: Group) {
+    return (
+      <table style={{ margin: "4px 0 8px" }}>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Engine</th>
+            <th>Named?</th>
+            <th>Prominence</th>
+            <th>Sentiment</th>
+            <th>Accuracy</th>
+            <th title="Did the answer cite the client's own website?">Own site cited</th>
+            <th>Competitors</th>
+          </tr>
+        </thead>
+        <tbody>
+          {g.rows.map((r) => {
+            const open = openR.has(r.id);
+            const e = ev[r.id] || {
+              evidence: r.evidence || "",
+              cited_sources: r.cited_sources || "",
+              cited_pr_id: r.cited_pr_id || "",
+            };
+            return (
+              <Fragment key={r.id}>
+                <tr className="main-row">
+                  <td>
+                    <button
+                      type="button"
+                      className="expander"
+                      aria-expanded={open}
+                      aria-label={`${open ? "Hide" : "Show"} ${r.engine} answer`}
+                      onClick={() => openDetail(r)}
+                      style={{ border: 0, background: "transparent", font: "inherit" }}
+                    >
+                      {open ? "▾" : "▸"}
+                    </button>
+                  </td>
+                  <td>{r.engine}</td>
+                  <td>
+                    {canEdit ? (
+                      <select
+                        value={r.mentioned ? "true" : "false"}
+                        onChange={(x) => onCellEdit(r.id, "mentioned", x.target.value)}
+                      >
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                      </select>
+                    ) : r.mentioned ? (
+                      <span className="tag t-yes">Yes</span>
+                    ) : (
+                      <span className="tag t-no">No</span>
+                    )}
+                  </td>
+                  <td>{ratingCell(r, "prominence", PROM_OPTS)}</td>
+                  <td>{ratingCell(r, "sentiment", SENT_OPTS, true)}</td>
+                  <td>{ratingCell(r, "accuracy", ACC_OPTS, true)}</td>
+                  <td>{ratingCell(r, "cited", CITE_OPTS)}</td>
+                  <td style={{ width: 58 }}>
+                    {canEdit ? (
+                      <select
+                        value={String(r.competitor_mentions ?? 0)}
+                        onChange={(x) =>
+                          onCellEdit(r.id, "competitor_mentions", x.target.value)
+                        }
+                      >
+                        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                          <option key={i}>{i}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      r.competitor_mentions ?? 0
+                    )}
+                  </td>
+                </tr>
+                {open && (
+                  <tr className="detail">
+                    <td colSpan={8}>
+                      <div className="legend-note" style={{ margin: "0 0 6px" }}>
+                        {r.method === "v2" && (
+                          <>
+                            {r.model || "—"} ·{" "}
+                            {r.web_search ? "live web search" : "no web search"} ·{" "}
+                          </>
+                        )}
+                        {r.samples ? `asked ${r.samples}×` : ""}
+                        {r.mention_rate != null &&
+                          ` · named in ${Math.round(r.mention_rate * 100)}% of samples`}
+                        {r.confidence && ` · confidence ${r.confidence}`}
+                      </div>
+                      <b>Evidence</b>
+                      <div className="evidence" style={{ margin: "6px 0" }}>
+                        {r.evidence || "(The answer didn't name the client.)"}
+                      </div>
+                      {r.answer && (
+                        <details style={{ margin: "6px 0" }}>
+                          <summary style={{ cursor: "pointer", fontSize: 12 }}>
+                            Full AI answer
+                          </summary>
+                          <div
+                            className="evidence"
+                            style={{ whiteSpace: "pre-wrap", marginTop: 6 }}
+                          >
+                            {r.answer}
+                          </div>
+                        </details>
+                      )}
+                      {!canEdit && r.cited_sources && (
+                        <div className="legend-note">
+                          <b>Sources cited:</b> {r.cited_sources}
+                        </div>
+                      )}
+                      {canEdit && (
+                        <>
+                          <textarea
+                            placeholder="Paste the exact AI quote / mention here"
+                            value={e.evidence}
+                            onChange={(x) =>
+                              setEv((prev) => ({
+                                ...prev,
+                                [r.id]: { ...e, evidence: x.target.value },
+                              }))
+                            }
+                          />
+                          <div className="flex" style={{ marginTop: 6, alignItems: "flex-end" }}>
+                            <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: 11, color: "var(--muted)" }}>
+                                Sources cited (comma-separated sites)
+                              </label>
+                              <input
+                                value={e.cited_sources}
+                                placeholder="e.g. techcrunch.com, g2.com"
+                                style={{ width: "100%" }}
+                                onChange={(x) =>
+                                  setEv((prev) => ({
+                                    ...prev,
+                                    [r.id]: { ...e, cited_sources: x.target.value },
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 11, color: "var(--muted)" }}>
+                                Credit this citation to a PR placement
+                              </label>
+                              <br />
+                              <select
+                                value={e.cited_pr_id}
+                                onChange={(x) =>
+                                  setEv((prev) => ({
+                                    ...prev,
+                                    [r.id]: { ...e, cited_pr_id: x.target.value },
+                                  }))
+                                }
+                              >
+                                <option value="">— none —</option>
+                                {data.pr.map((pp) => (
+                                  <option key={pp.id} value={pp.id}>
+                                    {pp.outlet}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div style={{ marginTop: 6 }}>
+                            <button className="btn sm" onClick={() => saveEvidence(r.id)}>
+                              Save evidence &amp; credit
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    );
   }
-
-  const jobCount = (st: string) => jobs.filter((j) => j.status === st).length;
-  const inFlight = jobCount("pending") + jobCount("sent");
-  const failed = jobs.filter((j) => j.status === "failed");
-  const skippedEngines = [
-    ...new Set(jobs.filter((j) => j.status === "skipped").map((j) => j.engine)),
-  ];
 
   return (
     <>
-      <div className="sec-title">Response Capture — {brand.name}</div>
-      <div className="sec-sub">
-        Edit any cell to recalculate the score live. Click ▸ to see the evidence behind
-        each rating. {rows.length} responses · {data.currentRun?.label || ""}.
-      </div>
-      {!ro && (
-        <div style={{ marginBottom: 12 }}>
-          <button className="btn sm" onClick={autoRun} disabled={inFlight > 0}>
-            ⚡ Auto-run live engines
-          </button>{" "}
-          <button className="btn sm ghost" onClick={newSnapshot} disabled={inFlight > 0}>
-            📸 New snapshot
-          </button>{" "}
-          <span className="muted" style={{ fontSize: 12 }}>
-            Asks every <b>live</b> engine each active prompt {samples}× with live web
-            search, and records a confidence rating. Auto-run re-measures this run; New
-            snapshot starts a fresh monthly run. Uses your AI credit.
-          </span>
-        </div>
-      )}
       {jobs.length > 0 && (
         <div className="legend-note" style={{ margin: "0 0 12px" }}>
           {inFlight > 0 ? (
@@ -257,13 +364,9 @@ export default function CaptureView() {
               appear below as they arrive.
             </>
           ) : (
-            <>
-              ✅ Measured {jobCount("done")} prompt × engine combinations for this run.
-            </>
+            <>✅ This check measured {jobs.filter((j) => j.status === "done").length} question × engine combinations.</>
           )}
-          {skippedEngines.length > 0 && (
-            <> Skipped (no API key): {skippedEngines.join(", ")}.</>
-          )}
+          {skipped.length > 0 && <> Skipped (no API key): {skipped.join(", ")}.</>}
           {failed.length > 0 && (
             <>
               {" "}
@@ -278,221 +381,73 @@ export default function CaptureView() {
           )}
         </div>
       )}
+
+      <div
+        className="flex"
+        style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 12 }}
+      >
+        <div className="flex" role="group" aria-label="Filter questions" style={{ flexWrap: "wrap", gap: 8 }}>
+          {chips.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={answersFilter === id}
+              className={`btn sm${answersFilter === id ? "" : " ghost"}`}
+              onClick={() => setAnswersFilter(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {!ro && groups.length > 0 && (
+          <label className="flex" style={{ fontWeight: 500, fontSize: 13, margin: 0, gap: 6 }}>
+            <input
+              type="checkbox"
+              style={{ width: "auto" }}
+              checked={editing}
+              onChange={(x) => setEditing(x.target.checked)}
+            />
+            Review / override ratings
+          </label>
+        )}
+      </div>
+
       <div className="card" style={{ overflow: "auto" }}>
-        {rows.length ? (
+        {shown.length ? (
           <table>
             <thead>
               <tr>
-                <th></th>
-                <th>ID</th>
-                <th>Prompt</th>
-                <th>Engine</th>
-                <th>Mentioned</th>
-                <th>Prominence</th>
-                <th>Sentiment</th>
-                <th>Accuracy</th>
-                <th>Cited</th>
-                <th>Comp #</th>
+                <th>Question we track</th>
+                <th>Type</th>
+                <th>Engines that named {brand.name}</th>
+                <th>
+                  <span className="sr-only">Answers</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const p = byP[r.prompt_id];
-                const open = expanded.has(r.id);
-                const e = ev[r.id] || {
-                  evidence: r.evidence || "",
-                  cited_sources: r.cited_sources || "",
-                  cited_pr_id: r.cited_pr_id || "",
-                };
+              {shown.map((g) => {
+                const open = openQ.has(g.prompt.id);
                 return (
-                  <Fragment key={r.id}>
+                  <Fragment key={g.prompt.id}>
                     <tr className="main-row">
-                      <td>
-                        <span className="expander" onClick={() => toggle(r.id)}>
-                          {open ? "▾" : "▸"}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="badge">{p?.code || ""}</span>
-                      </td>
-                      <td style={{ minWidth: 140 }}>{p ? p.text : ""}</td>
-                      <td>{r.engine}</td>
-                      <td>
-                        <select
-                          value={r.mentioned ? "true" : "false"}
-                          onChange={(ev) => onCellEdit(r.id, "mentioned", ev.target.value)}
+                      <td style={{ fontWeight: 600 }}>{g.prompt.text}</td>
+                      <td className="muted">{g.prompt.ptype}</td>
+                      <td>{namedTag(g)}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          className="btn sm ghost"
+                          aria-expanded={open}
+                          onClick={() => toggleSet(setOpenQ, g.prompt.id)}
                         >
-                          <option value="true">Yes</option>
-                          <option value="false">No</option>
-                        </select>
-                      </td>
-                      <td>
-                        <Dd
-                          value={r.prominence}
-                          opts={PROM_OPTS}
-                          onChange={(v) => onCellEdit(r.id, "prominence", v)}
-                        />
-                      </td>
-                      <td>
-                        <Dd
-                          value={r.sentiment}
-                          opts={SENT_OPTS}
-                          na
-                          onChange={(v) => onCellEdit(r.id, "sentiment", v)}
-                        />
-                      </td>
-                      <td>
-                        <Dd
-                          value={r.accuracy}
-                          opts={ACC_OPTS}
-                          na
-                          onChange={(v) => onCellEdit(r.id, "accuracy", v)}
-                        />
-                      </td>
-                      <td>
-                        <Dd
-                          value={r.cited}
-                          opts={CITE_OPTS}
-                          onChange={(v) => onCellEdit(r.id, "cited", v)}
-                        />
-                      </td>
-                      <td style={{ width: 58 }}>
-                        <select
-                          value={String(r.competitor_mentions ?? 0)}
-                          onChange={(ev) =>
-                            onCellEdit(r.id, "competitor_mentions", ev.target.value)
-                          }
-                        >
-                          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-                            <option key={i}>{i}</option>
-                          ))}
-                        </select>
+                          {open ? "Hide answers" : "Read answers"}
+                        </button>
                       </td>
                     </tr>
                     {open && (
                       <tr className="detail">
-                        <td colSpan={10}>
-                          {r.confidence && (
-                            <div className="legend-note" style={{ margin: "0 0 6px" }}>
-                              Measured over <b>{r.samples || "—"}</b> samples · mention
-                              rate{" "}
-                              <b>
-                                {r.mention_rate != null
-                                  ? Math.round(r.mention_rate * 100) + "%"
-                                  : "—"}
-                              </b>{" "}
-                              · confidence{" "}
-                              <b
-                                style={{
-                                  color:
-                                    r.confidence === "High"
-                                      ? "var(--green)"
-                                      : r.confidence === "Low"
-                                        ? "var(--red)"
-                                        : "var(--amber)",
-                                }}
-                              >
-                                {r.confidence}
-                              </b>
-                            </div>
-                          )}
-                          {r.method === "v2" && (
-                            <div className="legend-note" style={{ margin: "0 0 6px" }}>
-                              Measurement v2 · {r.model || "—"} ·{" "}
-                              {r.web_search ? (
-                                <span className="tag t-yes">live web search</span>
-                              ) : (
-                                <span className="tag t-na">no web search</span>
-                              )}
-                            </div>
-                          )}
-                          <b>Evidence — why this is scored this way:</b>
-                          <div className="evidence" style={{ margin: "6px 0" }}>
-                            {r.evidence || "(No evidence captured yet.)"}
-                          </div>
-                          {r.answer && (
-                            <details style={{ margin: "6px 0" }}>
-                              <summary style={{ cursor: "pointer", fontSize: 12 }}>
-                                Full AI answer
-                              </summary>
-                              <div
-                                className="evidence"
-                                style={{ whiteSpace: "pre-wrap", marginTop: 6 }}
-                              >
-                                {r.answer}
-                              </div>
-                            </details>
-                          )}
-                          {!ro && (
-                            <>
-                              <textarea
-                                placeholder="Paste the exact AI quote / mention here"
-                                value={e.evidence}
-                                onChange={(ev) =>
-                                  setEv((prev) => ({
-                                    ...prev,
-                                    [r.id]: { ...e, evidence: ev.target.value },
-                                  }))
-                                }
-                              />
-                              <div
-                                className="flex"
-                                style={{ marginTop: 6, alignItems: "flex-end" }}
-                              >
-                                <div style={{ flex: 1 }}>
-                                  <label
-                                    style={{ fontSize: 11, color: "var(--muted)" }}
-                                  >
-                                    Cited source domains (comma-separated)
-                                  </label>
-                                  <input
-                                    value={e.cited_sources}
-                                    placeholder="e.g. techcrunch.com, g2.com"
-                                    style={{ width: "100%" }}
-                                    onChange={(ev) =>
-                                      setEv((prev) => ({
-                                        ...prev,
-                                        [r.id]: { ...e, cited_sources: ev.target.value },
-                                      }))
-                                    }
-                                  />
-                                </div>
-                                <div>
-                                  <label
-                                    style={{ fontSize: 11, color: "var(--muted)" }}
-                                  >
-                                    Attribute citation to PR placement
-                                  </label>
-                                  <br />
-                                  <select
-                                    value={e.cited_pr_id}
-                                    onChange={(ev) =>
-                                      setEv((prev) => ({
-                                        ...prev,
-                                        [r.id]: { ...e, cited_pr_id: ev.target.value },
-                                      }))
-                                    }
-                                  >
-                                    <option value="">— none —</option>
-                                    {data.pr.map((pp) => (
-                                      <option key={pp.id} value={pp.id}>
-                                        {pp.outlet}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </div>
-                              <div style={{ marginTop: 6 }}>
-                                <button
-                                  className="btn sm"
-                                  onClick={() => saveEvidence(r.id)}
-                                >
-                                  Save evidence &amp; citation
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </td>
+                        <td colSpan={4}>{engineRows(g)}</td>
                       </tr>
                     )}
                   </Fragment>
@@ -500,14 +455,22 @@ export default function CaptureView() {
               })}
             </tbody>
           </table>
+        ) : groups.length ? (
+          <span className="muted">No questions in this filter.</span>
         ) : (
           <span>
-            No responses yet. Click <b>📸 New snapshot</b> to measure this client
-            automatically, or <b>Settings → Generate capture grid</b> to enter answers by
-            hand.
+            No answers yet. Use <b>Re-measure now</b> above (or <b>Run monthly check</b> on
+            Overview) to ask every live engine the tracked questions.
           </span>
         )}
       </div>
+      {groups.length > 0 && (
+        <p className="legend-note">
+          “Read answers” shows each engine&#39;s answer, the sources it cited and how it was
+          rated. Turn on <b>Review / override ratings</b> to correct a rating — the score
+          updates straight away.
+        </p>
+      )}
     </>
   );
 }

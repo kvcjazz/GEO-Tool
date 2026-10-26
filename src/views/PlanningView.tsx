@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useAppState } from "@/state/AppState";
-import { StrategyBanner } from "@/components/ui";
 import { newsDate, stars } from "@/lib/format";
 import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
@@ -232,8 +231,6 @@ export default function PlanningView() {
 
   const rateRadar = (id: string, val: string) =>
     patchStatus(id, { team_rating: val }, "Rated: " + val);
-  const approveRadar = (id: string) =>
-    patchStatus(id, { status: "in_plan" }, "Added to plan");
   const saveRadar = (id: string) =>
     patchStatus(id, { status: "saved" }, "Saved to your library");
   const unsaveRadar = (id: string) =>
@@ -248,14 +245,16 @@ export default function PlanningView() {
     await patchStatus(id, { status: "dismissed", dismiss_reason: reason }, "Dismissed");
   }
 
-  async function radarToBacklog(id: string) {
+  // Accepting an idea puts it in the one action plan (whatever its stream), so
+  // ideas and actions never live in two separate lists.
+  async function addToPlan(id: string) {
     const r = radar.find((x) => x.id === id);
     if (!r) return;
     const n = data.opps.length + 1;
     const rec = {
       brand_id: brand!.id,
       title: r.title || "",
-      linked_gap: r.geo_metric || "From PR Radar",
+      linked_gap: r.geo_metric || (r.stream === "geo_insight" ? "From ideas inbox" : "PR activity · from ideas inbox"),
       impact: Math.min(5, Math.max(1, r.impact || 3)),
       effort: 2,
       status: "Not started",
@@ -264,7 +263,7 @@ export default function PlanningView() {
     const { error } = await sb.from("geo_opportunities").insert(rec);
     if (error) return toast("Failed: " + error.message);
     await sb.from("geo_radar_items").update({ status: "in_plan" }).eq("id", id);
-    toast("Added to GEO backlog");
+    toast("Added to the action plan");
     await reload();
   }
 
@@ -342,7 +341,7 @@ export default function PlanningView() {
               👎 Unrealistic
             </button>
             {!approved && (
-              <button className="btn sm" onClick={() => approveRadar(it.id)}>
+              <button className="btn sm" onClick={() => addToPlan(it.id)}>
                 ✓ Add to plan
               </button>
             )}
@@ -353,11 +352,6 @@ export default function PlanningView() {
             ) : (
               <button className="btn sm ghost" onClick={() => saveRadar(it.id)}>
                 ⭐ Save for later
-              </button>
-            )}
-            {it.stream === "geo_insight" && (
-              <button className="btn sm ghost" onClick={() => radarToBacklog(it.id)}>
-                ★ Send to GEO backlog
               </button>
             )}
             <button className="btn sm danger" onClick={() => dismissRadar(it.id)}>
@@ -415,14 +409,6 @@ export default function PlanningView() {
 
   return (
     <>
-      <StrategyBanner />
-      <div className="sec-title">PR Planning — {brand.name}</div>
-      <div className="sec-sub">
-        The Opportunity Radar scans breaking news plus this client&#39;s profile and GEO
-        data, then pushes ranked, feasible recommendations — split into PR activity and
-        GEO-supporting insight. Rate them to teach the system; save the good ones for
-        later.
-      </div>
 
       {/* Breaking news */}
       <div className="card" style={{ marginBottom: 14 }}>

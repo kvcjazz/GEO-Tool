@@ -54,9 +54,17 @@ Next.js app never needs them, it only calls the functions.
   editable metric- and engine-weights.
 - **Edge functions** — `src/lib/callFn.ts` attaches the signed-in user's token +
   the anon key and validates the JSON response with a Zod schema.
-- **Views** — `src/views/*` — one component per sidebar page (Dashboard,
-  Response Capture, Prompt Set, Opportunity Backlog, PR Planning, Source Intel,
-  PR & Influence, Listening, Settings).
+- **Navigation** — `AREAS` in `src/lib/constants.ts` defines the sidebar,
+  organised around the monthly cycle: **Overview**, **AI answers** (Answers ·
+  Sources AI trusts · Other mentions), **Plan** (Ideas inbox · Action plan),
+  **Coverage & impact**, then **Client setup** and **Admin**. Each area carries
+  the question it answers, a "what to do here" line and its main action;
+  `src/components/Shell.tsx` renders it with a context bar (client, current
+  check, engines live, measuring progress) and the Team/Client view switch.
+  Client view shows Overview, Plan progress and Coverage & impact only. Old tab
+  ids still resolve via `LEGACY_VIEWS`.
+- **Views** — `src/views/*` render each area/tab; `SettingsView` renders both
+  Client setup (checklist from `src/lib/setup.ts`) and Admin.
 
 ## Backend (reused, do not recreate)
 
