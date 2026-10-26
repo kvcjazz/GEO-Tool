@@ -17,8 +17,9 @@
 // Web search (measurement v2): callModel(..., { webSearch: true }) turns on
 // each provider's own search tool so answers and citations reflect what a user
 // of that engine actually sees. Perplexity always searches. If a provider
-// rejects the search request, the call falls back to a plain answer and says
-// so (`searched: false`, `searchError`) rather than failing silently.
+// rejects the search request, or a searched answer takes longer than
+// SEARCH_TIMEOUT_MS, the call falls back to a plain answer and says so
+// (`searched: false`, `searchError`) rather than failing silently.
 
 export type ProviderId = "anthropic" | "openai" | "gemini" | "perplexity" | "xai";
 
@@ -222,6 +223,15 @@ async function readJson(r: Response): Promise<unknown> {
   }
 }
 
+/**
+ * A searched answer can take minutes when the model keeps searching. Past this,
+ * the call is abandoned for a plain answer so one slow sample can't push the
+ * whole measurement past the edge-function time limit.
+ */
+const SEARCH_TIMEOUT_MS = 90_000;
+/** Status used for an abandoned (timed-out) search call; not retried. */
+const TIMED_OUT = 408;
+
 const fail = (status: number, message: string): Attempt => ({
   ok: false,
   status,
@@ -238,10 +248,10 @@ type AnthropicBlock = {
 };
 
 /**
- * Claude with its server-side web search tool. Claude 4.6+ models take the
- * dynamic-filtering tool version; older ones the basic version. A long search
- * turn can stop with `pause_turn`, which is resumed by sending the partial
- * assistant turn back.
+ * Claude with its server-side web search tool. This uses the basic tool, capped
+ * at 3 searches: the dynamic-filtering version runs code over the results and
+ * was too slow here (answers past 150 s). A long search turn can stop with
+ * `pause_turn`, which is resumed by sending the partial assistant turn back.
  */
 async function anthropicSearch(
   key: string,
@@ -249,9 +259,7 @@ async function anthropicSearch(
   model: string,
   maxTokens: number,
 ): Promise<Attempt> {
-  const tool = model.startsWith("claude-3")
-    ? { type: "web_search_20250305", name: "web_search", max_uses: 5 }
-    : { type: "web_search_20260209", name: "web_search", max_uses: 5 };
+  const tool = { type: "web_search_20250305", name: "web_search", max_uses: 3 };
   const messages: { role: string; content: unknown }[] = [
     { role: "user", content: prompt },
   ];
@@ -265,6 +273,7 @@ async function anthropicSearch(
         "content-type": "application/json",
       },
       body: JSON.stringify({ model, max_tokens: maxTokens, messages, tools: [tool] }),
+      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     });
     const j = (await readJson(r)) as {
       content?: AnthropicBlock[];
@@ -279,16 +288,10 @@ async function anthropicSearch(
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
     .join("");
-  // Prefer the sources Claude actually cited; fall back to what it read.
-  const cited = blocks.flatMap((b) =>
-    b.type === "text" ? (b.citations || []).map((c) => c.url || "") : []
-  );
-  const read = blocks.flatMap((b) =>
-    b.type === "web_search_tool_result" && Array.isArray(b.content)
-      ? b.content.map((c) => c.url || "")
-      : []
-  );
-  const citations = (cited.some(Boolean) ? cited : read).filter(Boolean);
+  // Only the sources Claude cites in its answer — not every page it read.
+  const citations = blocks
+    .flatMap((b) => (b.type === "text" ? (b.citations || []).map((c) => c.url || "") : []))
+    .filter(Boolean);
   return { ok: true, status: 200, text, citations, message: "" };
 }
 
@@ -307,6 +310,7 @@ async function responsesSearch(
     method: "POST",
     headers: { authorization: "Bearer " + key, "content-type": "application/json" },
     body: JSON.stringify({ model, input: prompt, tools: [{ type: "web_search" }] }),
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
   const j = (await readJson(r)) as {
     output?: {
@@ -435,6 +439,7 @@ async function attempt(
         contents: [{ parts: [{ text: prompt }] }],
         ...(webSearch ? { tools: [{ google_search: {} }] } : {}),
       }),
+      ...(webSearch ? { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) } : {}),
     },
   );
   const j = (await readJson(r)) as {
@@ -480,7 +485,10 @@ export async function callModel(
       try {
         a = await attempt(provider, key, prompt, model, maxTokens, webSearch);
       } catch (e) {
-        a = { ok: false, status: 0, text: "", citations: [], message: String(e) };
+        const timedOut = e instanceof DOMException && e.name === "TimeoutError";
+        a = timedOut
+          ? fail(TIMED_OUT, `timed out after ${SEARCH_TIMEOUT_MS / 1000}s`)
+          : fail(0, String(e));
       }
       if (a.ok) {
         resolvedModel.set(provider, model);
