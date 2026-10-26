@@ -39,7 +39,22 @@ function filterRuns(runs: Run[], dr: DateRange, currentRun: Run | null): Run[] {
 export default function DashboardView() {
   const { brand, data, dateRange } = useAppState();
   if (!brand) return null;
-  const { currentRun, responses, runs, pr, sov } = data;
+  const { currentRun, responses, runs, pr, sov, history } = data;
+
+  if (currentRun?.method === "v2" && !responses.length) {
+    return (
+      <>
+        <StrategyBanner />
+        <div className="card">
+          <h3>Measuring {currentRun.label}…</h3>
+          <div className="sec-sub">
+            The AI engines are being asked this client&#39;s prompts now. Results appear
+            here as they come in — follow progress in <b>Response Capture</b>.
+          </div>
+        </div>
+      </>
+    );
+  }
 
   if (!currentRun || !responses.length) {
     const hasStrat = !!(brand.objective || brand.positioning);
@@ -73,9 +88,8 @@ export default function DashboardView() {
             </li>
           </ol>
           <div className="legend-note">
-            Note: fully automatic population — the system querying the AI engines for
-            you — is the live-API step on the roadmap. For now responses are captured
-            manually or seeded.
+            Or skip steps 3–4: <b>📸 New snapshot</b> in Response Capture asks every live
+            AI engine all active prompts and fills the dashboard automatically.
           </div>
         </div>
       </>
@@ -83,9 +97,25 @@ export default function DashboardView() {
   }
 
   const { perEngine, blended } = computeAll(brand, responses);
-  const hist = runs.filter((r) => !r.is_current);
-  const baseline = hist.length ? hist[0].score : null;
+  // Scores are only comparable between runs measured the same way, so the
+  // trend and baseline use runs of the current run's method. Each earlier run
+  // is scored from its own responses with today's weights; runs without
+  // responses (e.g. imported history) fall back to their stored score.
+  const sameMethod = (r: Run) => (r.method ?? null) === (currentRun.method ?? null);
+  const runScore = (r: Run): number | null =>
+    r.is_current
+      ? r1(blended.geo)
+      : history[r.id]?.length
+        ? r1(computeAll(brand, history[r.id]).blended.geo)
+        : r.score;
+  const comparable = [...runs]
+    .filter(sameMethod)
+    .sort((a, b) => new Date(a.run_date).getTime() - new Date(b.run_date).getTime());
+  const baselineRun = comparable.find((r) => !r.is_current && runScore(r) != null);
+  const baseline = baselineRun ? runScore(baselineRun) : null;
   const delta = baseline != null ? r1(blended.geo - baseline) : null;
+  const methodChanged = runs.some((r) => !sameMethod(r));
+  const firstOfMethod = comparable[0]?.run_date;
   const bm = brandMentionsTotal(responses);
   const sovRows = [
     { player: brand.name, mentions: bm, me: true },
@@ -97,21 +127,11 @@ export default function DashboardView() {
   const conf = confLabel(responses);
   const mw = metricWeights(brand);
 
-  const rs = filterRuns(
-    [...runs].sort(
-      (a, b) => new Date(a.run_date).getTime() - new Date(b.run_date).getTime(),
-    ),
-    dateRange,
-    currentRun,
-  );
+  const rs = filterRuns(comparable, dateRange, currentRun);
   const prYM = pr.map((p) => (p.activity_date || "").slice(0, 7));
-  const trendData = rs.map((r) => (r.is_current ? r1(blended.geo) : r.score));
+  const trendData = rs.map(runScore);
   const prMarks = rs.map((r) =>
-    prYM.includes((r.run_date || "").slice(0, 7))
-      ? r.is_current
-        ? r1(blended.geo)
-        : r.score
-      : null,
+    prYM.includes((r.run_date || "").slice(0, 7)) ? runScore(r) : null,
   );
 
   return (
@@ -125,8 +145,8 @@ export default function DashboardView() {
             <small>/100</small>
           </div>
           {delta != null && (
-            <div className="delta-up">
-              ▲ +{delta} pts since baseline ({baseline})
+            <div className="delta-up" style={delta < 0 ? { color: "#f0a3a3" } : undefined}>
+              {delta < 0 ? `▼ ${delta}` : `▲ +${delta}`} pts since baseline ({baseline})
             </div>
           )}
           {conf && (
@@ -212,6 +232,14 @@ export default function DashboardView() {
           <div className="legend-note">
             <span style={{ color: "#C9871B" }}>◆</span> marks months with logged PR
             activity — watch the score move after coverage lands.
+            {methodChanged && currentRun.method === "v2" && (
+              <>
+                {" "}
+                <b>New measurement method from {firstOfMethod}:</b> engines are asked
+                the plain question with live web search, so earlier runs aren&#39;t
+                comparable and this trend starts again from there.
+              </>
+            )}
           </div>
         </div>
       </div>

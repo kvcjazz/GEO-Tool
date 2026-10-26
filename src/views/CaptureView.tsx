@@ -1,21 +1,17 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useAppState } from "@/state/AppState";
 import {
   ACC_OPTS,
   CITE_OPTS,
   ENGINES,
-  MEASURE_FN,
   PROM_OPTS,
   SENT_OPTS,
 } from "@/lib/constants";
 import { computeAll } from "@/lib/scoring";
 import { r1 } from "@/lib/format";
-import { callFn } from "@/lib/callFn";
-import { RunBatchResponseSchema, RunResponseSchema } from "@/lib/schemas";
-import type { Json } from "@/lib/database.types";
-import type { Response } from "@/lib/types";
+import type { MeasureJob, Response } from "@/lib/types";
 
 function Dd({
   value,
@@ -46,19 +42,47 @@ export default function CaptureView() {
     data,
     mode,
     samples,
-    engines,
     sb,
     toast,
     reload,
-    setView,
     patchResponse,
   } = useAppState();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [ev, setEv] = useState<
     Record<string, { evidence: string; cited_sources: string; cited_pr_id: string }>
   >({});
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState("");
+  const [jobs, setJobs] = useState<MeasureJob[]>([]);
+  const [pollKey, setPollKey] = useState(0);
+  const runId = data.currentRun?.id;
+
+  // Follow this run's queued measurements: poll while any are waiting or in
+  // flight, and reload results each time more of them finish.
+  useEffect(() => {
+    if (!runId) return;
+    let stopped = false;
+    let lastFinished = -1;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      const { data: rows } = await sb
+        .from("geo_measure_jobs")
+        .select("*")
+        .eq("run_id", runId);
+      if (stopped) return;
+      const list = (rows || []) as MeasureJob[];
+      setJobs(list);
+      const finished = list.filter((j) => j.status === "done").length;
+      if (lastFinished >= 0 && finished !== lastFinished) await reload();
+      lastFinished = finished;
+      if (!stopped && list.some((j) => j.status === "pending" || j.status === "sent")) {
+        timer = setTimeout(tick, 8000);
+      }
+    };
+    timer = setTimeout(tick, 0);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [sb, runId, reload, pollKey]);
 
   const byP = useMemo(() => {
     const m: Record<string, (typeof data.prompts)[number]> = {};
@@ -138,98 +162,48 @@ export default function CaptureView() {
     toast(error ? "Save failed" : "Saved");
   }
 
-  function liveEngines() {
-    return ENGINES.filter((en) => engines[en]);
+  async function startSnapshot() {
+    const { error } = await sb.rpc("geo_start_snapshot", {
+      bid: brand!.id,
+      p_samples: samples,
+    });
+    if (error) return toast("Snapshot failed: " + error.message);
+    toast("Snapshot started — results arrive over the next 10–20 minutes");
+    await reload();
+    setPollKey((k) => k + 1);
   }
 
   async function autoRun() {
     if (mode !== "team") return;
-    const active = data.prompts.filter((p) => p.active);
-    if (!active.length) return toast("No active prompts to run");
+    if (!data.prompts.some((p) => p.active)) return toast("No active prompts to run");
     if (!data.currentRun) return toast("No current run for this brand");
-    const engs = liveEngines();
-    if (!engs.length) return toast("No live engines — add an API key in Settings");
-    const total = active.length * engs.length;
+    if (data.currentRun.method !== "v2") {
+      // Never mix methods inside one run: start a new-method run instead.
+      if (
+        window.confirm(
+          "This run used the old measurement method, so new results can't be added to " +
+            "it. Start a new snapshot with the new method instead? Uses your AI credit.",
+        )
+      )
+        await startSnapshot();
+      return;
+    }
     if (
       !window.confirm(
-        "Auto-run " +
-          engs.join(", ") +
-          " across " +
-          active.length +
-          " prompts, " +
+        "Re-measure every active prompt on every live AI engine, " +
           samples +
-          " samples each (for confidence)? That's " +
-          total +
-          " measurements and uses your AI credit.",
+          " samples each? Results update here as they come in (usually 10–20 minutes). " +
+          "Uses your AI credit.",
       )
     )
       return;
-    setBusy(true);
-    let done = 0;
-    for (const p of active) {
-      for (const eng of engs) {
-        done++;
-        setProgress(`⚡ ${done}/${total}…`);
-        try {
-          const j = await callFn(
-            MEASURE_FN,
-            {
-              engine: eng,
-              prompt: p.text,
-              brand: brand!.name,
-              brand_aliases: brand!.aliases,
-              website: brand!.website,
-              competitors: data.competitors.map((c) => c.name),
-              competitor_aliases: Object.fromEntries(
-                data.competitors.map((c) => [c.name, c.aliases]),
-              ),
-              samples,
-            },
-            RunResponseSchema,
-          );
-          if (!j.ok) {
-            if (j.error !== "no_key") toast(eng + ": " + (j.error || "run failed"));
-            continue;
-          }
-          const o = j.result!;
-          const row = {
-            mentioned: !!o.mentioned,
-            prominence: o.prominence || "Absent",
-            sentiment: o.sentiment || null,
-            accuracy: o.accuracy || null,
-            cited: o.cited || "n/a",
-            competitor_mentions: +(o.competitor_mentions || 0),
-            evidence: o.evidence || null,
-            cited_sources: o.cited_sources || null,
-            samples: o.samples || samples,
-            mention_rate: o.mention_rate != null ? o.mention_rate : null,
-            confidence: o.confidence || null,
-            answer: o.answer || null,
-            method: o.method || null,
-            model: o.model || null,
-            web_search: o.web_search ?? null,
-            raw: (o.runs as Json | undefined) ?? null,
-          };
-          const exRow = data.responses.find(
-            (r) => r.prompt_id === p.id && r.engine === eng,
-          );
-          if (exRow) {
-            await sb.from("geo_responses").update(row).eq("id", exRow.id);
-          } else {
-            await sb
-              .from("geo_responses")
-              .insert({ run_id: data.currentRun!.id, prompt_id: p.id, engine: eng, ...row });
-          }
-        } catch (e) {
-          toast("Error: " + String(e));
-        }
-      }
-    }
-    setBusy(false);
-    setProgress("");
-    toast("Auto-run complete");
-    await reload();
-    setView("capture");
+    const { data: n, error } = await sb.rpc("geo_enqueue_run", {
+      rid: data.currentRun.id,
+      p_samples: samples,
+    });
+    if (error) return toast("Auto-run failed: " + error.message);
+    toast(n ? n + " measurements queued" : "Already measuring — nothing new queued");
+    setPollKey((k) => k + 1);
   }
 
   async function newSnapshot() {
@@ -238,31 +212,20 @@ export default function CaptureView() {
       !window.confirm(
         "Create a fresh monthly snapshot for " +
           brand!.name +
-          "? This starts a new run and re-measures all active prompts across live engines. Uses your AI credit.",
+          "? This starts a new run and measures all active prompts on every live AI " +
+          "engine. Uses your AI credit.",
       )
     )
       return;
-    setBusy(true);
-    setProgress("📸 Capturing…");
-    try {
-      const j = await callFn(
-        "geo-run-batch",
-        { brand_id: brand!.id, samples },
-        RunBatchResponseSchema,
-      );
-      toast(
-        j.ok
-          ? "Snapshot " + (j.label || "") + ": " + j.responses + " measurements"
-          : "Snapshot failed: " + (j.error || ""),
-      );
-      await reload();
-      setView("dashboard");
-    } catch (e) {
-      toast("Snapshot error: " + String(e));
-    }
-    setBusy(false);
-    setProgress("");
+    await startSnapshot();
   }
+
+  const jobCount = (st: string) => jobs.filter((j) => j.status === st).length;
+  const inFlight = jobCount("pending") + jobCount("sent");
+  const failed = jobs.filter((j) => j.status === "failed");
+  const skippedEngines = [
+    ...new Set(jobs.filter((j) => j.status === "skipped").map((j) => j.engine)),
+  ];
 
   return (
     <>
@@ -273,17 +236,46 @@ export default function CaptureView() {
       </div>
       {!ro && (
         <div style={{ marginBottom: 12 }}>
-          <button className="btn sm" onClick={autoRun} disabled={busy}>
-            {busy && progress.startsWith("⚡") ? progress : "⚡ Auto-run live engines"}
+          <button className="btn sm" onClick={autoRun} disabled={inFlight > 0}>
+            ⚡ Auto-run live engines
           </button>{" "}
-          <button className="btn sm ghost" onClick={newSnapshot} disabled={busy}>
-            {busy && progress.startsWith("📸") ? progress : "📸 New snapshot"}
+          <button className="btn sm ghost" onClick={newSnapshot} disabled={inFlight > 0}>
+            📸 New snapshot
           </button>{" "}
           <span className="muted" style={{ fontSize: 12 }}>
-            Auto-run queries every <b>live</b> engine {samples}× per prompt and records a
-            confidence rating. New snapshot starts a fresh monthly run. Uses your AI
-            credit.
+            Asks every <b>live</b> engine each active prompt {samples}× with live web
+            search, and records a confidence rating. Auto-run re-measures this run; New
+            snapshot starts a fresh monthly run. Uses your AI credit.
           </span>
+        </div>
+      )}
+      {jobs.length > 0 && (
+        <div className="legend-note" style={{ margin: "0 0 12px" }}>
+          {inFlight > 0 ? (
+            <>
+              ⏳ Measuring: <b>{jobs.length - inFlight}</b> of {jobs.length} done — results
+              appear below as they arrive.
+            </>
+          ) : (
+            <>
+              ✅ Measured {jobCount("done")} prompt × engine combinations for this run.
+            </>
+          )}
+          {skippedEngines.length > 0 && (
+            <> Skipped (no API key): {skippedEngines.join(", ")}.</>
+          )}
+          {failed.length > 0 && (
+            <>
+              {" "}
+              <b style={{ color: "var(--red)" }}>{failed.length} failed</b>
+              {inFlight === 0 && (
+                <>
+                  {" "}
+                  — e.g. {failed[0].engine}: {failed[0].error || "no result"}
+                </>
+              )}
+            </>
+          )}
         </div>
       )}
       <div className="card" style={{ overflow: "auto" }}>
@@ -510,7 +502,9 @@ export default function CaptureView() {
           </table>
         ) : (
           <span>
-            No capture rows yet. Go to <b>Settings → Generate capture grid</b>.
+            No responses yet. Click <b>📸 New snapshot</b> to measure this client
+            automatically, or <b>Settings → Generate capture grid</b> to enter answers by
+            hand.
           </span>
         )}
       </div>

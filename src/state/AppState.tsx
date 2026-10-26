@@ -14,6 +14,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { callFn } from "@/lib/callFn";
 import { EngineStatusSchema } from "@/lib/schemas";
 import { CLIENT_VIEWS } from "@/lib/constants";
+import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
+import type { Scorable } from "@/lib/scoring";
 import type {
   Brand,
   Competitor,
@@ -38,6 +40,8 @@ type BrandData = {
   runs: Run[];
   currentRun: Run | null;
   responses: Response[];
+  /** Scoring fields of earlier runs measured the same way as the current one. */
+  history: Record<string, Scorable[]>;
   sov: { player: string; mentions: number }[];
   opps: Opportunity[];
   pr: PrActivity[];
@@ -55,6 +59,7 @@ const EMPTY: BrandData = {
   runs: [],
   currentRun: null,
   responses: [],
+  history: {},
   sov: [],
   opps: [],
   pr: [],
@@ -243,15 +248,36 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
       let responses: Response[] = [];
       let sov: { player: string; mentions: number }[] = [];
+      const history: Record<string, Scorable[]> = {};
       if (currentRun) {
-        const [resp, sovRes] = await Promise.all([
+        // Earlier runs only count towards the trend when measured the same way.
+        const earlier = runList.filter(
+          (r) => r.id !== currentRun.id && (r.method ?? null) === (currentRun.method ?? null),
+        );
+        const [resp, sovRes, hist] = await Promise.all([
           sb.from("geo_responses").select("*").eq("run_id", currentRun.id),
           sb.from("geo_competitor_sov").select("*").eq("run_id", currentRun.id),
+          earlier.length
+            ? sb
+                .from("geo_responses")
+                .select(SCORE_COLUMNS)
+                .in(
+                  "run_id",
+                  earlier.map((r) => r.id),
+                )
+            : Promise.resolve({ data: [] }),
         ]);
         responses = (resp.data || []) as Response[];
-        sov = ((sovRes.data || []) as { player: string; mentions: number }[]).map(
-          (s) => ({ player: s.player, mentions: s.mentions }),
-        );
+        sov =
+          currentRun.method === "v2"
+            ? sovFromSamples(responses, (comps.data || []) as Competitor[])
+            : ((sovRes.data || []) as { player: string; mentions: number }[]).map((s) => ({
+                player: s.player,
+                mentions: s.mentions,
+              }));
+        for (const row of (hist.data || []) as (Scorable & { run_id: string })[]) {
+          (history[row.run_id] ||= []).push(row);
+        }
       }
 
       setBrands((prev) => {
@@ -265,6 +291,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         runs: runList,
         currentRun,
         responses,
+        history,
         sov,
         opps: (opps.data || []) as Opportunity[],
         pr: (pr.data || []) as PrActivity[],

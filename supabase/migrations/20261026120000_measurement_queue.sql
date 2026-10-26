@@ -119,7 +119,13 @@ begin
      where id = j.id;
     perform net.http_post(
       url := 'https://ymnulfluxjgqacodzfxq.supabase.co/functions/v1/geo-measure',
-      headers := jsonb_build_object('content-type', 'application/json'),
+      -- geo-measure keeps verify_jwt on, so send the project's (public) legacy
+      -- anon JWT, as the other GEO cron jobs send their public key.
+      headers := jsonb_build_object(
+        'content-type', 'application/json',
+        'apikey', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltbnVsZmx1eGpncWFjb2R6ZnhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5NjI4OTksImV4cCI6MjA5MDUzODg5OX0.MrQSMTrkXGLQiZJpAFN6QLkzBLbFyHzmzIZGIddC8Ts',
+        'authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltbnVsZmx1eGpncWFjb2R6ZnhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5NjI4OTksImV4cCI6MjA5MDUzODg5OX0.MrQSMTrkXGLQiZJpAFN6QLkzBLbFyHzmzIZGIddC8Ts'
+      ),
       body := jsonb_build_object('job_id', j.id),
       timeout_milliseconds := 300000
     );
@@ -136,3 +142,16 @@ revoke all on function public.geo_start_snapshot(uuid, int) from public, anon;
 revoke all on function public.geo_dispatch_measure_jobs(int) from public, anon, authenticated;
 grant execute on function public.geo_enqueue_run(uuid, int) to authenticated;
 grant execute on function public.geo_start_snapshot(uuid, int) to authenticated;
+
+-- Schedules: the monthly snapshot starts a v2 run per active brand (replacing
+-- the geo-run-batch call), and the dispatcher drains the queue every minute.
+select cron.schedule(
+  'geo-monthly-snapshot',
+  '0 6 1 * *',
+  $$select public.geo_start_snapshot(b.id, 3) from public.geo_brands b where b.archived = false;$$
+);
+select cron.schedule(
+  'geo-measure-dispatch',
+  '* * * * *',
+  $$select public.geo_dispatch_measure_jobs(12);$$
+);

@@ -964,6 +964,48 @@ export type Database = {
           },
         ]
       }
+      geo_measure_jobs: {
+        Row: {
+          attempts: number
+          created_at: string
+          engine: string
+          error: string | null
+          finished_at: string | null
+          id: string
+          prompt_id: string
+          run_id: string
+          samples: number
+          sent_at: string | null
+          status: string
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          engine: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          prompt_id: string
+          run_id: string
+          samples?: number
+          sent_at?: string | null
+          status?: string
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          engine?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          prompt_id?: string
+          run_id?: string
+          samples?: number
+          sent_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       geo_media_targets: {
         Row: {
           brand_id: string
@@ -1414,6 +1456,7 @@ export type Database = {
           is_current: boolean
           label: string
           mention: number | null
+          method: string | null
           run_date: string
           score: number | null
           sentiment: number | null
@@ -1427,6 +1470,7 @@ export type Database = {
           is_current?: boolean
           label: string
           mention?: number | null
+          method?: string | null
           run_date?: string
           score?: number | null
           sentiment?: number | null
@@ -1440,6 +1484,7 @@ export type Database = {
           is_current?: boolean
           label?: string
           mention?: number | null
+          method?: string | null
           run_date?: string
           score?: number | null
           sentiment?: number | null
@@ -2354,6 +2399,8 @@ export type Database = {
     }
     Functions: {
       geo_delete_brand: { Args: { bid: string }; Returns: undefined }
+      geo_enqueue_run: { Args: { p_samples?: number; rid: string }; Returns: number }
+      geo_start_snapshot: { Args: { bid: string; p_samples?: number }; Returns: string }
       log_admin_time: {
         Args: { p_action_key: string; p_client_id: string }
         Returns: undefined

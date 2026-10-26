@@ -11,7 +11,17 @@ import {
   type MetricWeights,
 } from "./constants";
 import { avg, sum } from "./format";
-import type { Brand, Response } from "./types";
+import type { Brand, Competitor, Response } from "./types";
+
+/** The response fields the score is computed from. */
+export type Scorable = Pick<
+  Response,
+  "engine" | "mentioned" | "competitor_mentions" | "cited" | "prominence" | "sentiment" | "accuracy"
+>;
+
+/** Columns to select when only scoring a run (keeps answers and raw out). */
+export const SCORE_COLUMNS =
+  "run_id,engine,mentioned,competitor_mentions,cited,prominence,sentiment,accuracy";
 
 export function metricWeights(brand: Brand): MetricWeights {
   const w = (brand.metric_weights || {}) as Record<string, unknown>;
@@ -44,7 +54,7 @@ export type EngineMetrics = {
 };
 
 export function engineMetrics(
-  responses: Response[],
+  responses: Scorable[],
   eng: string,
 ): EngineMetrics | null {
   const rows = responses.filter((r) => r.engine === eng);
@@ -83,7 +93,7 @@ export function geoSub(m: EngineMetrics, w: MetricWeights): number {
 export type PerEngine = EngineMetrics & { engine: string; geo: number };
 export type Blended = EngineMetrics & { geo: number };
 
-export function computeAll(brand: Brand, responses: Response[]): {
+export function computeAll(brand: Brand, responses: Scorable[]): {
   perEngine: PerEngine[];
   blended: Blended;
 } {
@@ -119,7 +129,7 @@ export function computeAll(brand: Brand, responses: Response[]): {
   return { perEngine, blended };
 }
 
-export function brandMentionsTotal(responses: Response[]): number {
+export function brandMentionsTotal(responses: Scorable[]): number {
   return sum(responses.map((r) => (r.mentioned ? 1 : 0)));
 }
 
@@ -154,4 +164,24 @@ export function prAttribution(responses: Response[]): {
     attr: attr.length,
     pct: citedRows.length ? Math.round((attr.length / citedRows.length) * 100) : 0,
   };
+}
+
+/**
+ * Share-of-voice counts for a v2 run, from each response's per-sample detail: a
+ * competitor counts once per prompt × engine when it was named in at least half
+ * the samples — the same rule as the brand's own "mentioned".
+ */
+export function sovFromSamples(
+  responses: Response[],
+  competitors: Competitor[],
+): { player: string; mentions: number }[] {
+  return competitors.map((c) => ({
+    player: c.name,
+    mentions: responses.filter((r) => {
+      const samples = (Array.isArray(r.raw) ? r.raw : []) as { competitors?: string[] }[];
+      if (!samples.length) return false;
+      const named = samples.filter((s) => (s.competitors || []).includes(c.name)).length;
+      return named / samples.length >= 0.5;
+    }).length,
+  }));
 }
