@@ -9,45 +9,6 @@ export const EngineStatusSchema = z.object({
 });
 export type EngineStatusResp = z.infer<typeof EngineStatusSchema>;
 
-export const RunResultSchema = z.object({
-  answer: z.string().nullish(),
-  mentioned: z.boolean().nullish(),
-  mention_rate: z.number().nullish(),
-  prominence: z.string().nullish(),
-  sentiment: z.string().nullish(),
-  accuracy: z.string().nullish(),
-  cited: z.string().nullish(),
-  competitor_mentions: z.number().nullish(),
-  evidence: z.string().nullish(),
-  cited_sources: z.string().nullish(),
-  samples: z.number().nullish(),
-  confidence: z.string().nullish(),
-  // Measurement v2 (geo-measure) only.
-  method: z.string().nullish(),
-  model: z.string().nullish(),
-  web_search: z.boolean().nullish(),
-  runs: z.array(z.record(z.string(), z.unknown())).nullish(),
-});
-
-export const RunResponseSchema = z.object({
-  ok: z.boolean(),
-  engine: z.string().nullish(),
-  error: z.string().nullish(),
-  result: RunResultSchema.nullish(),
-});
-export type RunResponse = z.infer<typeof RunResponseSchema>;
-
-export const RunBatchResponseSchema = z.object({
-  ok: z.boolean(),
-  run_id: z.string().nullish(),
-  label: z.string().nullish(),
-  prompts: z.number().nullish(),
-  engines: z.array(z.string()).nullish(),
-  responses: z.number().nullish(),
-  error: z.string().nullish(),
-});
-export type RunBatchResponse = z.infer<typeof RunBatchResponseSchema>;
-
 export const NewsArticleSchema = z.object({
   title: z.string().nullish(),
   url: z.string().nullish(),

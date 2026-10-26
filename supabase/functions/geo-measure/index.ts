@@ -18,10 +18,11 @@
 // The response keeps v1's result shape plus the full answer, per-sample detail
 // and web-search status.
 //
-// Two ways in (the function runs with verify_jwt off and checks callers itself):
+// Two ways in (the gateway requires a valid JWT for both):
 //   - { job_id }: a queued measurement from geo_measure_jobs, sent by the
-//     geo_dispatch_measure_jobs cron. The job's unguessable id is the
-//     credential, and only a job in status "sent" is accepted. The function
+//     geo_dispatch_measure_jobs cron with the project's anon JWT. The job's
+//     unguessable id is what authorises it, and only a job in status "sent" is
+//     accepted. The function
 //     loads the prompt, brand and competitors, measures, saves the
 //     geo_responses row itself and marks the job done/skipped/failed.
 //   - { engine, prompt, brand, ... }: a direct measurement for a signed-in user
