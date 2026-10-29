@@ -21,6 +21,7 @@ import type { Database } from "@/lib/database.types";
 import { z } from "zod";
 
 type ResponseInsert = Database["public"]["Tables"]["geo_responses"]["Insert"];
+type BrandUpdate = Database["public"]["Tables"]["geo_brands"]["Update"];
 
 type Sugg = z.infer<typeof AdviseSuggestSchema>["prompts"];
 
@@ -116,6 +117,29 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
   const mwTot = METRIC_KEYS.reduce((s, k) => s + (+mw[k] || 0), 0);
   const ewTot = ENGINES.reduce((s, en) => s + (+ew[en] || 0), 0);
 
+  /**
+   * Save fields on the client. The database refuses edits from accounts without
+   * edit access to this client by updating nothing (no error), so a save that
+   * touched no row is reported as not saved rather than "saved".
+   */
+  async function updateBrand(upd: BrandUpdate): Promise<boolean> {
+    const { data: rows, error } = await sb
+      .from("geo_brands")
+      .update(upd)
+      .eq("id", brand!.id)
+      .select("id");
+    if (error) {
+      toast("Save failed: " + error.message);
+      return false;
+    }
+    if (!rows?.length) {
+      toast("Not saved: your account can't edit this client. Ask an admin for edit access.");
+      return false;
+    }
+    patchBrand(upd);
+    return true;
+  }
+
   async function saveStrategy() {
     const upd = {
       objective: strategy.objective.trim(),
@@ -123,10 +147,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       positioning: strategy.positioning.trim(),
       themes: strategy.themes.trim(),
     };
-    const { error } = await sb.from("geo_brands").update(upd).eq("id", brand!.id);
-    if (error) return toast("Save failed");
-    patchBrand(upd);
-    toast("Strategy saved");
+    if (await updateBrand(upd)) toast("Strategy saved");
   }
 
   async function saveProfile() {
@@ -139,10 +160,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       pr_newsworthy: profile.pr_newsworthy.trim() || null,
       pr_research_budget: profile.pr_research_budget,
     };
-    const { error } = await sb.from("geo_brands").update(upd).eq("id", brand!.id);
-    if (error) return toast("Save failed: " + error.message);
-    patchBrand(upd);
-    toast("PR profile saved");
+    if (await updateBrand(upd)) toast("PR profile saved");
   }
 
   async function saveBrandDetails() {
@@ -153,9 +171,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       aliases: parseAliases(details.aliases),
       is_client: details.is_client,
     };
-    const { error } = await sb.from("geo_brands").update(upd).eq("id", brand!.id);
-    if (error) return toast("Save failed");
-    patchBrand(upd);
+    if (!(await updateBrand(upd))) return;
     await loadBrands();
     toast("Brand details saved");
   }
