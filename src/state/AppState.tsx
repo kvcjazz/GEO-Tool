@@ -36,6 +36,7 @@ import type {
   Response,
   Run,
   SourceKind,
+  TargetTitle,
 } from "@/lib/types";
 
 type BrandData = {
@@ -48,6 +49,8 @@ type BrandData = {
   history: Record<string, Scorable[]>;
   /** What each cited site is to this client, keyed by domain. */
   sourceKinds: Record<string, SourceKind>;
+  /** Titles to target: the senior-PR review of cited sites, plus the team's calls. */
+  targets: TargetTitle[];
   sov: { player: string; mentions: number }[];
   opps: Opportunity[];
   pr: PrActivity[];
@@ -67,6 +70,7 @@ const EMPTY: BrandData = {
   responses: [],
   history: {},
   sourceKinds: {},
+  targets: [],
   sov: [],
   opps: [],
   pr: [],
@@ -121,6 +125,8 @@ type Ctx = {
   setSourceKind: (domain: string, kind: string, label?: string | null) => Promise<void>;
   /** True while cited sites are being classified. */
   classifying: boolean;
+  /** Merge saved Titles to target rows into the loaded data. */
+  mergeTargets: (rows: TargetTitle[]) => void;
 
   /** Queued measurements for the current run, kept fresh while any are in flight. */
   jobs: MeasureJob[];
@@ -241,6 +247,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         radar,
         news,
         kinds,
+        targets,
       ] = await Promise.all([
         sb.from("geo_competitors").select("*").eq("brand_id", id),
         sb.from("geo_prompts").select("*").eq("brand_id", id).order("sort"),
@@ -274,6 +281,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           .order("created_at", { ascending: false })
           .limit(20),
         sb.from("geo_source_kinds").select("*").eq("brand_id", id),
+        sb.from("geo_target_titles").select("*").eq("brand_id", id),
       ]);
 
       const allNews = (news.data || []) as NewsItem[];
@@ -330,6 +338,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         sourceKinds: Object.fromEntries(
           ((kinds.data || []) as SourceKind[]).map((k) => [k.domain, k]),
         ),
+        targets: (targets.data || []) as TargetTitle[],
         sov,
         opps: (opps.data || []) as Opportunity[],
         pr: (pr.data || []) as PrActivity[],
@@ -494,6 +503,14 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     },
     [brand, sb, toast],
   );
+
+  const mergeTargets = useCallback((rows: TargetTitle[]) => {
+    setData((prev) => {
+      const byId = new Map(prev.targets.map((t) => [t.id, t]));
+      for (const r of rows) byId.set(r.id, r);
+      return { ...prev, targets: [...byId.values()] };
+    });
+  }, []);
 
   const setSourceKind = useCallback(
     (domain: string, kind: string, label?: string | null) =>
@@ -671,6 +688,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     remeasure,
     measureNewQuestions,
     setSourceKind,
+    mergeTargets,
     classifying,
     toast,
     toastMsg,

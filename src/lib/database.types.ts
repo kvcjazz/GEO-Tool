@@ -1530,6 +1530,95 @@ export type Database = {
           },
         ]
       }
+      geo_target_titles: {
+        Row: {
+          angle: string | null
+          basis: string | null
+          batch_id: string | null
+          brand_id: string
+          citations: number
+          domain: string | null
+          engines: string[]
+          example_urls: string[]
+          gap_citations: number
+          id: string
+          key: string
+          kind: string | null
+          known: boolean | null
+          name: string
+          needs: string | null
+          priority: number | null
+          questions: number
+          reason: string | null
+          route: string | null
+          story: string | null
+          team_decision: string | null
+          team_note: string | null
+          updated_at: string
+          verdict: string | null
+        }
+        Insert: {
+          angle?: string | null
+          basis?: string | null
+          batch_id?: string | null
+          brand_id: string
+          citations?: number
+          domain?: string | null
+          engines?: string[]
+          example_urls?: string[]
+          gap_citations?: number
+          id?: string
+          key: string
+          kind?: string | null
+          known?: boolean | null
+          name: string
+          needs?: string | null
+          priority?: number | null
+          questions?: number
+          reason?: string | null
+          route?: string | null
+          story?: string | null
+          team_decision?: string | null
+          team_note?: string | null
+          updated_at?: string
+          verdict?: string | null
+        }
+        Update: {
+          angle?: string | null
+          basis?: string | null
+          batch_id?: string | null
+          brand_id?: string
+          citations?: number
+          domain?: string | null
+          engines?: string[]
+          example_urls?: string[]
+          gap_citations?: number
+          id?: string
+          key?: string
+          kind?: string | null
+          known?: boolean | null
+          name?: string
+          needs?: string | null
+          priority?: number | null
+          questions?: number
+          reason?: string | null
+          route?: string | null
+          story?: string | null
+          team_decision?: string | null
+          team_note?: string | null
+          updated_at?: string
+          verdict?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_target_titles_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "geo_brands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           actor_id: string | null

@@ -94,6 +94,26 @@ deno test _shared/measure_test.ts   # deterministic checks
 deno check geo-measure/index.ts
 ```
 
+### Titles to target (`geo-targets`)
+
+**Plan → Titles to target** recommends where to earn coverage. Candidates come
+only from citations — the sites the engines cited in the client's web-searched
+answers over the last 3 checks (`src/lib/targets.ts` ranks them: buyer
+questions, engine weights and competitor-gap answers count for more), or, for a
+client with no measured answers yet, a first-look probe that asks its buyer
+questions through `geo-measure` in direct mode (nothing is saved as a
+measurement). `geo-targets` then has Claude judge each one as a senior PR
+consultant would — realistic / stretch / not realistic, route in, angle from the
+story (the PR profile by default, or a story the team types in), and why.
+Results and the team's calls (relationship / no-go) live in `geo_target_titles`;
+the calls are fed into the next review, and realistic titles are passed to the
+Radar as targets.
+
+```bash
+cd supabase/functions
+deno check geo-targets/index.ts
+```
+
 The retired hosting hack (`geo_app` table + `geo-pilot`/`geo-publish`/`geo-diag`
 functions) is intentionally **not** used.
 
