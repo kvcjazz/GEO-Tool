@@ -16,9 +16,15 @@ create table if not exists public.geo_source_kinds (
 );
 
 alter table public.geo_source_kinds enable row level security;
-drop policy if exists geo_source_kinds_all on public.geo_source_kinds;
-create policy geo_source_kinds_all on public.geo_source_kinds
-  for all to authenticated using (true) with check (true);
+-- Same per-client access as the other geo_ tables.
+drop policy if exists geo_source_kinds_select on public.geo_source_kinds;
+create policy geo_source_kinds_select on public.geo_source_kinds
+  for select to authenticated using (public.geo_can_see_brand(brand_id));
+drop policy if exists geo_source_kinds_write on public.geo_source_kinds;
+create policy geo_source_kinds_write on public.geo_source_kinds
+  for all to authenticated
+  using (public.geo_can_edit_brand(brand_id))
+  with check (public.geo_can_edit_brand(brand_id));
 
 -- Re-measuring can now be limited to question × engine pairs the run has no
 -- answer for yet — used after adding questions mid-month.
