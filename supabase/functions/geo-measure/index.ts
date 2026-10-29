@@ -29,6 +29,7 @@
 //     (their access token is checked with Supabase Auth). Nothing is saved.
 import { callModel, CORS, envKey, json, KEY_ENV, parseJson, providerFor } from "../_shared/providers.ts";
 import type { ProviderId } from "../_shared/providers.ts";
+import { signedIn } from "../_shared/auth.ts";
 import {
   citationDomains,
   citesSite,
@@ -352,16 +353,6 @@ async function runJob(jobId: string): Promise<Outcome> {
 }
 
 // ---- Entry point -----------------------------------------------------------
-
-/** True when the request carries a signed-in user's access token. */
-async function signedIn(req: Request): Promise<boolean> {
-  const auth = req.headers.get("authorization") || "";
-  if (!/^bearer\s+\S+/i.test(auth)) return false;
-  const apikey = req.headers.get("apikey") || Deno.env.get("SUPABASE_ANON_KEY") || "";
-  const r = await fetch(SB + "/auth/v1/user", { headers: { apikey, authorization: auth } });
-  await r.body?.cancel();
-  return r.ok;
-}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });

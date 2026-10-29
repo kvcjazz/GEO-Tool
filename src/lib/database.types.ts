@@ -1447,6 +1447,36 @@ export type Database = {
           },
         ]
       }
+      geo_source_kinds: {
+        Row: {
+          brand_id: string
+          domain: string
+          id: string
+          kind: string
+          label: string | null
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          brand_id: string
+          domain: string
+          id?: string
+          kind: string
+          label?: string | null
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          brand_id?: string
+          domain?: string
+          id?: string
+          kind?: string
+          label?: string | null
+          source?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       geo_runs: {
         Row: {
           brand_id: string
@@ -2399,7 +2429,10 @@ export type Database = {
     }
     Functions: {
       geo_delete_brand: { Args: { bid: string }; Returns: undefined }
-      geo_enqueue_run: { Args: { p_samples?: number; rid: string }; Returns: number }
+      geo_enqueue_run: {
+        Args: { p_only_new?: boolean; p_samples?: number; rid: string }
+        Returns: number
+      }
       geo_start_snapshot: { Args: { bid: string; p_samples?: number }; Returns: string }
       log_admin_time: {
         Args: { p_action_key: string; p_client_id: string }

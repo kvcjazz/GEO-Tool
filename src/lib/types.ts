@@ -16,6 +16,7 @@ export type ContextItem = Tables["geo_context"]["Row"];
 export type RadarItem = Tables["geo_radar_items"]["Row"];
 export type NewsItem = Tables["geo_news"]["Row"];
 export type MeasureJob = Tables["geo_measure_jobs"]["Row"];
+export type SourceKind = Tables["geo_source_kinds"]["Row"];
 
 export type EngineStatus = Record<string, boolean>;
 

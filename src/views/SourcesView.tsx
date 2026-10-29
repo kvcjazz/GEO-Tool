@@ -1,41 +1,34 @@
 "use client";
 
 import { useAppState } from "@/state/AppState";
-import { StrategyBanner } from "@/components/ui";
 import { host } from "@/lib/format";
+import { KIND_LABELS, citedSources, gapSources, isOwnSite, isTarget as notCompetitor } from "@/lib/sources";
 
 export default function SourcesView() {
-  const { brand, data } = useAppState();
+  const { brand, data, mode, sb, toast, reload, setSourceKind, classifying } = useAppState();
   if (!brand) return null;
-  const resp = data.responses;
-  const own = host(brand.website || "");
+  const ro = mode === "client";
+  const kinds = data.sourceKinds;
+  const rows = citedSources(data.responses);
+  const allGaps = gapSources(brand, data.responses);
+  // A client won't be covered on a competitor's own site, so those aren't targets.
+  const gaps = allGaps.filter((g) => notCompetitor(g.domain, kinds));
+  const competitorGaps = allGaps.filter((g) => !notCompetitor(g.domain, kinds));
+  const kindNote = (d: string) => {
+    const k = kinds[d];
+    if (!k) return null;
+    return (
+      <span className="muted" style={{ fontSize: 12 }}>
+        {" "}
+        · {k.label || KIND_LABELS[k.kind] || k.kind}
+      </span>
+    );
+  };
+
   const mediaNames = data.media.map((m) => (m.outlet || "").toLowerCase());
-  const norm = (s: string) =>
-    (s || "")
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/^www\./, "")
-      .split("/")[0];
-
-  const counts: Record<string, number> = {};
-  const engineOf: Record<string, Set<string>> = {};
-  resp.forEach((r) => {
-    String(r.cited_sources || "")
-      .split(/[,;]/)
-      .forEach((s) => {
-        const d = norm(s);
-        if (!d) return;
-        counts[d] = (counts[d] || 0) + 1;
-        (engineOf[d] = engineOf[d] || new Set()).add(r.engine);
-      });
-  });
-  const rows = Object.keys(counts)
-    .map((d) => ({ domain: d, count: counts[d], engines: [...(engineOf[d] || [])] }))
-    .sort((a, b) => b.count - a.count);
-
-  const isOwn = (d: string) =>
-    !!own && (d === own || d.indexOf(own) >= 0 || own.indexOf(d) >= 0);
+  const coverageHosts = new Set(data.pr.map((p) => host(p.url)).filter(Boolean));
+  const isCoverage = (d: string) =>
+    [...coverageHosts].some((h) => d === h || d.endsWith("." + h));
   const isTarget = (d: string) =>
     mediaNames.some((n) => {
       const t = n.replace(/[^a-z0-9]/g, "");
@@ -45,115 +38,173 @@ export default function SourcesView() {
       );
     });
   const cls = (d: string) =>
-    isOwn(d) ? (
-      <span className="tag t-yes">Owned</span>
+    isOwnSite(d, brand) ? (
+      <span className="tag t-yes">Your site</span>
+    ) : isCoverage(d) ? (
+      <span className="tag t-pos">Your coverage</span>
+    ) : kinds[d]?.kind === "competitor" ? (
+      <span className="tag t-no">Competitor</span>
     ) : isTarget(d) ? (
-      <span className="badge">Target</span>
+      <span className="badge">Target outlet</span>
     ) : (
       <span className="tag t-na">Gap</span>
     );
 
-  const gapCounts: Record<string, number> = {};
-  resp
-    .filter((r) => !r.mentioned && (r.competitor_mentions || 0) > 0)
-    .forEach((r) => {
-      String(r.cited_sources || "")
-        .split(/[,;]/)
-        .forEach((s) => {
-          const d = norm(s);
-          if (!d || isOwn(d)) return;
-          gapCounts[d] = (gapCounts[d] || 0) + 1;
-        });
+  const planned = new Set(data.opps.map((o) => o.title));
+  const planTitle = (d: string) => `Earn coverage on ${d}`;
+  async function addToPlan(d: string, count: number) {
+    const { error } = await sb.from("geo_opportunities").insert({
+      brand_id: brand!.id,
+      title: planTitle(d),
+      linked_gap: `Citation · cited ${count}× in answers that don't name ${brand!.name}`,
+      impact: count >= 10 ? 5 : count >= 5 ? 4 : 3,
+      effort: 3,
+      status: "Not started",
+      sort: data.opps.length + 1,
     });
-  const gapRows = Object.keys(gapCounts)
-    .map((d) => ({ domain: d, count: gapCounts[d] }))
-    .sort((a, b) => b.count - a.count);
+    if (error) return toast("Failed: " + error.message);
+    toast("Added to the action plan");
+    await reload();
+  }
+
+  if (!rows.length) {
+    return (
+      <div className="card">
+        <h3>No source data yet</h3>
+        <p className="muted" style={{ fontSize: 13 }}>
+          Sources appear here after a monthly check, which records the sites each engine
+          cites in its answers.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <>
-      <StrategyBanner />
-      <div className="sec-title">Source Intelligence — {brand.name}</div>
-      <div className="sec-sub">
-        Which sources the AI engines rely on for this client&#39;s prompts — where
-        you&#39;re already the source (<b>Owned</b>), where a target outlet is cited (
-        <b>Target</b>), and the <b>Gaps</b> you should go earn. Populated from captured
-        cited-sources.
+    <div className="two" style={{ alignItems: "start" }}>
+      <div className="card" style={{ overflow: "auto" }}>
+        <h3>Most-cited sites (this check)</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Site</th>
+              <th>Cited</th>
+              <th>Engines</th>
+              <th>What it is to you</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 25).map((r) => (
+              <tr key={r.domain}>
+                <td>
+                  <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
+                    {r.domain}
+                  </a>
+                  {kindNote(r.domain)}
+                </td>
+                <td>
+                  <b>{r.count}</b>
+                </td>
+                <td className="muted" style={{ fontSize: 12 }}>
+                  {r.engines.join(", ")}
+                </td>
+                <td>{cls(r.domain)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      {rows.length ? (
-        <div className="two" style={{ alignItems: "start" }}>
-          <div className="card" style={{ overflow: "auto" }}>
-            <h3>Most-cited sources (current run)</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Domain</th>
-                  <th>Cited</th>
-                  <th>Engines</th>
-                  <th>Status</th>
+      <div className="card">
+        <h3>Where to earn coverage</h3>
+        <div className="legend-note" style={{ marginTop: 0, marginBottom: 10 }}>
+          Sites the engines cite when they answer without naming {brand.name}, leaving out
+          competitors&#39; own sites — the clearest places to aim earned coverage.
+          {classifying && <> Checking which sites are competitors…</>}
+        </div>
+        <table>
+          <tbody>
+            {gaps.length ? (
+              gaps.slice(0, 20).map((r) => (
+                <tr key={r.domain}>
+                  <td>
+                    <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
+                      {r.domain}
+                    </a>
+                    {kindNote(r.domain)}{" "}
+                    {isCoverage(r.domain) && <span className="tag t-pos">Your coverage</span>}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <b>{r.count}</b>
+                  </td>
+                  {!ro && (
+                    <td style={{ textAlign: "right", width: 1, whiteSpace: "nowrap" }}>
+                      {planned.has(planTitle(r.domain)) ? (
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          In plan
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn sm ghost"
+                          onClick={() => addToPlan(r.domain, r.count)}
+                        >
+                          Add to plan
+                        </button>
+                      )}{" "}
+                      <button
+                        type="button"
+                        className="btn sm ghost"
+                        title="Mark as a competitor's site and leave it out of this list"
+                        onClick={() => setSourceKind(r.domain, "competitor", "Competitor")}
+                      >
+                        Competitor
+                      </button>
+                    </td>
+                  )}
                 </tr>
-              </thead>
+              ))
+            ) : (
+              <tr>
+                <td className="muted">
+                  No gaps: every answer that cited sources also named {brand.name}.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {competitorGaps.length > 0 && (
+          <details style={{ marginTop: 12 }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              Competitor sites left out ({competitorGaps.length})
+            </summary>
+            <table style={{ marginTop: 6 }}>
               <tbody>
-                {rows.slice(0, 25).map((r) => (
+                {competitorGaps.map((r) => (
                   <tr key={r.domain}>
                     <td>
                       <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
                         {r.domain}
                       </a>
+                      {kindNote(r.domain)}
                     </td>
-                    <td>
-                      <b>{r.count}</b>
-                    </td>
-                    <td className="muted" style={{ fontSize: 12 }}>
-                      {r.engines.join(", ")}
-                    </td>
-                    <td>{cls(r.domain)}</td>
+                    <td style={{ textAlign: "right" }}>{r.count}</td>
+                    {!ro && (
+                      <td style={{ textAlign: "right", width: 1, whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          className="btn sm ghost"
+                          onClick={() => setSourceKind(r.domain, "other", null)}
+                        >
+                          Not a competitor
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-          <div className="card">
-            <h3>Priority target gaps</h3>
-            <div className="legend-note">
-              Sources cited in answers where a competitor is named but {brand.name} is
-              not — the clearest places to aim earned coverage.
-            </div>
-            <table>
-              <tbody>
-                {gapRows.length ? (
-                  gapRows.slice(0, 20).map((r) => (
-                    <tr key={r.domain}>
-                      <td>
-                        <a href={`//${r.domain}`} target="_blank" rel="noreferrer">
-                          {r.domain}
-                        </a>
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        <b>{r.count}</b>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="muted">
-                      No competitor-gap sources captured yet — record cited sources in
-                      Response Capture (auto-run does this).
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        <div className="card">
-          <h3>No source data yet</h3>
-          <div className="sec-sub">
-            Run the auto-capture (which records the domains each engine relies on) or
-            enter cited sources in Response Capture, then this view will populate.
-          </div>
-        </div>
-      )}
-    </>
+          </details>
+        )}
+      </div>
+    </div>
   );
 }

@@ -15,6 +15,7 @@ import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
+import { setupSteps } from "@/lib/setup";
 import type { Prompt } from "@/lib/types";
 import type { Database } from "@/lib/database.types";
 import { z } from "zod";
@@ -23,7 +24,7 @@ type ResponseInsert = Database["public"]["Tables"]["geo_responses"]["Insert"];
 
 type Sugg = z.infer<typeof AdviseSuggestSchema>["prompts"];
 
-export default function SettingsView() {
+export default function SettingsView({ section }: { section: "setup" | "admin" }) {
   const {
     brand,
     data,
@@ -111,6 +112,7 @@ export default function SettingsView() {
   }, [brand?.id]);
 
   if (!brand) return null;
+  const steps = setupSteps(brand, data);
   const mwTot = METRIC_KEYS.reduce((s, k) => s + (+mw[k] || 0), 0);
   const ewTot = ENGINES.reduce((s, en) => s + (+ew[en] || 0), 0);
 
@@ -241,7 +243,7 @@ export default function SettingsView() {
     setPrompts((prev) =>
       prev.map((p) => (p.id === id ? { ...p, [field]: val } : p)),
     );
-    toast(error ? "Save failed" : "Prompt saved");
+    toast(error ? "Save failed" : "Question saved");
   }
 
   async function addPrompt() {
@@ -257,7 +259,7 @@ export default function SettingsView() {
     });
     if (error) return toast("Failed");
     setNewPrompt("");
-    toast("Prompt added");
+    toast("Question added");
     await reload();
   }
 
@@ -315,7 +317,7 @@ export default function SettingsView() {
     const { error } = await sb.from("geo_prompts").insert(rows);
     if (error) return toast("Failed: " + error.message);
     setSugg([]);
-    toast(rows.length + " prompts added to the set");
+    toast(rows.length + " questions added");
     await reload();
   }
 
@@ -385,7 +387,7 @@ export default function SettingsView() {
       runId = newRun.id;
     }
     const active = prompts.filter((p) => p.active);
-    if (!active.length) return toast("Add prompts first");
+    if (!active.length) return toast("Add questions first");
     const have = new Set(
       data.currentRun ? data.responses.map((r) => r.prompt_id + "|" + r.engine) : [],
     );
@@ -409,7 +411,7 @@ export default function SettingsView() {
     if (error) return toast("Failed: " + error.message);
     toast(rows.length + " new rows added (existing data kept)");
     await reload();
-    setView("capture");
+    setView("answers", "answers");
   }
 
   async function createClient() {
@@ -454,7 +456,7 @@ export default function SettingsView() {
     );
     await loadBrands();
     await selectBrand(bid);
-    setView("settings");
+    setView("setup");
   }
 
   async function archiveClient() {
@@ -462,7 +464,7 @@ export default function SettingsView() {
       !window.confirm(
         "Archive " +
           brand!.name +
-          "? It will be hidden from the brand switcher but all its data is kept and can be restored from Settings → Danger zone.",
+          "? It will be hidden from the brand switcher but all its data is kept and can be restored from Admin → Archive or delete client.",
       )
     )
       return;
@@ -473,7 +475,7 @@ export default function SettingsView() {
     if (error) return toast("Archive failed: " + error.message);
     toast("Client archived");
     await loadBrands();
-    setView("settings");
+    setView("admin");
   }
 
   async function restoreClient(id: string) {
@@ -484,7 +486,7 @@ export default function SettingsView() {
     if (error) return toast("Restore failed: " + error.message);
     toast("Client restored");
     await loadBrands();
-    setView("settings");
+    setView("admin");
   }
 
   async function deleteClient(id?: string) {
@@ -495,7 +497,7 @@ export default function SettingsView() {
       !window.confirm(
         "Permanently delete " +
           nm +
-          " and ALL its data (runs, prompts, responses, PR, mentions, context)?\n\nThis cannot be undone.",
+          " and ALL its data (monthly checks, questions, answers, PR, mentions, documents)?\n\nThis cannot be undone.",
       )
     )
       return;
@@ -504,20 +506,90 @@ export default function SettingsView() {
     if (error) return toast("Delete failed: " + error.message);
     toast(nm + " deleted");
     await loadBrands();
-    setView("settings");
+    setView("admin");
   }
 
   return (
     <>
-      <div className="sec-title">Settings — {brand.name}</div>
-      <div className="sec-sub">
-        Customise this client&#39;s strategy and GEO parameters. Changes save to the
-        database.
-      </div>
-
-      {/* Users & access (account-wide) */}
-      <UsersAdmin />
-
+      {section === "setup" && (
+        <>
+          <ol className="checklist">
+            {steps.map((st, i) => (
+              <li key={st.id}>
+                <span className="n">{i + 1}</span>
+                <div className="txt">
+                  <b>{st.title}</b>
+                  <div>{st.detail}</div>
+                </div>
+                {st.status === "done" ? (
+                  <span className="tag t-yes">Done</span>
+                ) : st.status === "attention" ? (
+                  <span className="tag" style={{ background: "#fbefd9", color: "#6e4a0c" }}>
+                    Needs attention
+                  </span>
+                ) : (
+                  <span className="tag t-na">Review</span>
+                )}
+                <button
+                  type="button"
+                  className="btn sm ghost"
+                  onClick={() =>
+                    document
+                      .getElementById("setup-" + st.id)
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  }
+                >
+                  Open
+                </button>
+              </li>
+            ))}
+          </ol>
+        <div id="setup-brand" className="setup-section">
+        {/* Brand details */}
+        <div className="card stack">
+          <h3>Brand &amp; website</h3>
+          <label>Name</label>
+          <input
+            value={details.name}
+            onChange={(e) => setDetails({ ...details, name: e.target.value })}
+          />
+          <label>Sector</label>
+          <input
+            value={details.sector}
+            onChange={(e) => setDetails({ ...details, sector: e.target.value })}
+          />
+          <label>Website URL</label>
+          <input
+            value={details.website}
+            placeholder="https://clientsite.com"
+            onChange={(e) => setDetails({ ...details, website: e.target.value })}
+          />
+          <label>Also known as</label>
+          <input
+            value={details.aliases}
+            placeholder="e.g. Acme, Acme Corp (comma-separated)"
+            onChange={(e) => setDetails({ ...details, aliases: e.target.value })}
+          />
+          <label className="flex" style={{ fontWeight: 500 }}>
+            <input
+              type="checkbox"
+              checked={details.is_client}
+              style={{ width: "auto", marginRight: 8 }}
+              onChange={(e) => setDetails({ ...details, is_client: e.target.checked })}
+            />{" "}
+            Is a client
+          </label>
+          <button className="btn sm" onClick={saveBrandDetails}>
+            Save details
+          </button>
+          <div className="legend-note">
+            The website is the client&#39;s ground-truth domain — used to spot when their
+            own site is cited, and given to the AI for context. &quot;Also known as&quot;
+            lists other names the brand goes by, so a mention under any of them counts.
+          </div>
+        </div>
+        </div>
+        <div id="setup-strategy" className="setup-section">
       {/* Visibility strategy */}
       <div className="card stack" style={{ marginBottom: 16 }}>
         <h3>Visibility strategy &amp; positioning</h3>
@@ -549,11 +621,205 @@ export default function SettingsView() {
           Save strategy
         </button>
         <div className="legend-note">
-          Strategy shapes the prompt set you build and powers the ✨ AI guidance on the
-          Opportunity Backlog.
+          Strategy shapes the questions you track and powers the ✨ AI guidance in the
+          action plan.
         </div>
       </div>
-
+        </div>
+        <div id="setup-competitors" className="setup-section">
+        {/* Competitors */}
+        <div className="card">
+          <h3>Competitors</h3>
+          <table>
+            <tbody>
+              {data.competitors.length ? (
+                data.competitors.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.name}</td>
+                    <td>
+                      <input
+                        key={(c.aliases || []).join(",")}
+                        defaultValue={(c.aliases || []).join(", ")}
+                        placeholder="Also known as…"
+                        title="Other names this competitor goes by (comma-separated)"
+                        onBlur={(e) => saveCompetitorAliases(c.id, e.target.value)}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="btn sm danger"
+                        onClick={() => delCompetitor(c.id)}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="muted">None</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <div className="flex" style={{ marginTop: 10 }}>
+            <input
+              value={newComp}
+              placeholder="Add competitor name"
+              onChange={(e) => setNewComp(e.target.value)}
+            />
+            <button className="btn sm" onClick={addCompetitor}>
+              Add
+            </button>
+          </div>
+        </div>
+        </div>
+        <div id="setup-questions" className="setup-section">
+        {/* Prompt set */}
+        <div className="card" style={{ gridColumn: "1/-1" }}>
+          <h3>Questions we track ({prompts.length})</h3>
+          <div style={{ overflow: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Prompt</th>
+                  <th>Active</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {prompts.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <span className="badge">{p.code}</span>
+                    </td>
+                    <td>
+                      <select
+                        value={p.ptype || "Category"}
+                        onChange={(e) => savePrompt(p.id, "ptype", e.target.value)}
+                      >
+                        {PTYPES.map((t) => (
+                          <option key={t}>{t}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        defaultValue={p.text}
+                        style={{ width: "100%", minWidth: 240 }}
+                        onBlur={(e) => {
+                          if (e.target.value !== p.text)
+                            savePrompt(p.id, "text", e.target.value);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={!!p.active}
+                        style={{ width: "auto" }}
+                        onChange={(e) => savePrompt(p.id, "active", e.target.checked)}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button className="btn sm danger" onClick={() => delPrompt(p.id)}>
+                        Del
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex" style={{ marginTop: 10 }}>
+            <input
+              value={newPrompt}
+              placeholder="New question, as a buyer would ask it"
+              style={{ flex: 1 }}
+              onChange={(e) => setNewPrompt(e.target.value)}
+            />
+            <button className="btn sm" onClick={addPrompt}>
+              Add prompt
+            </button>
+          </div>
+          <div
+            style={{ marginTop: 12, borderTop: "1px solid var(--line)", paddingTop: 12 }}
+          >
+            <button className="btn sm" onClick={suggestPrompts} disabled={suggBusy}>
+              {suggBusy ? "✨ Thinking…" : "✨ Suggest questions from strategy"}
+            </button>{" "}
+            <span className="muted" style={{ fontSize: 12 }}>
+              Ranked by impact on this client&#39;s strategy; you pick which to add to
+              your existing prompts.
+            </span>
+            {sugg && sugg.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div className="legend-note">
+                  Source: {suggSource === "ai" ? "AI-generated" : "strategy template"}.
+                  Ranked by impact on this client&#39;s strategy — tick the ones to add.
+                </div>
+                <div style={{ overflow: "auto" }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>Type</th>
+                        <th>Suggested question</th>
+                        <th>Impact</th>
+                        <th>Why it matters to the strategy</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sugg.map((p, i) => (
+                        <tr key={i}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              style={{ width: "auto" }}
+                              checked={suggPicks.has(i)}
+                              onChange={(e) =>
+                                setSuggPicks((prev) => {
+                                  const n = new Set(prev);
+                                  if (e.target.checked) n.add(i);
+                                  else n.delete(i);
+                                  return n;
+                                })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <span className="badge">{p!.ptype}</span>
+                          </td>
+                          <td style={{ minWidth: 200 }}>{p!.text}</td>
+                          <td
+                            style={{ color: "#C9871B", whiteSpace: "nowrap" }}
+                            title={`Impact ${p!.impact}/5`}
+                          >
+                            {stars(Number(p!.impact))}
+                          </td>
+                          <td className="muted" style={{ minWidth: 240 }}>
+                            {p!.reason}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  className="btn sm"
+                  style={{ marginTop: 8 }}
+                  onClick={addSelectedSuggestions}
+                >
+                  Add selected to prompt set
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        </div>
+        <div id="setup-media" className="setup-section">
       {/* Client PR Profile */}
       <div
         className="card stack"
@@ -626,7 +892,6 @@ export default function SettingsView() {
           Save PR profile
         </button>
       </div>
-
       {/* VIP & target media */}
       <div className="card stack" style={{ marginBottom: 16 }}>
         <h3>VIP &amp; target media list</h3>
@@ -708,288 +973,11 @@ export default function SettingsView() {
           Add media target
         </button>
       </div>
-
-      <div className="set-grid">
-        {/* Brand details */}
-        <div className="card stack">
-          <h3>Brand details</h3>
-          <label>Name</label>
-          <input
-            value={details.name}
-            onChange={(e) => setDetails({ ...details, name: e.target.value })}
-          />
-          <label>Sector</label>
-          <input
-            value={details.sector}
-            onChange={(e) => setDetails({ ...details, sector: e.target.value })}
-          />
-          <label>Website URL</label>
-          <input
-            value={details.website}
-            placeholder="https://clientsite.com"
-            onChange={(e) => setDetails({ ...details, website: e.target.value })}
-          />
-          <label>Also known as</label>
-          <input
-            value={details.aliases}
-            placeholder="e.g. Acme, Acme Corp (comma-separated)"
-            onChange={(e) => setDetails({ ...details, aliases: e.target.value })}
-          />
-          <label className="flex" style={{ fontWeight: 500 }}>
-            <input
-              type="checkbox"
-              checked={details.is_client}
-              style={{ width: "auto", marginRight: 8 }}
-              onChange={(e) => setDetails({ ...details, is_client: e.target.checked })}
-            />{" "}
-            Is a client
-          </label>
-          <button className="btn sm" onClick={saveBrandDetails}>
-            Save details
-          </button>
-          <div className="legend-note">
-            The website is the client&#39;s ground-truth domain — used to spot when their
-            own site is cited, and given to the AI for context. &quot;Also known as&quot;
-            lists other names the brand goes by, so a mention under any of them counts.
-          </div>
         </div>
-
-        {/* Metric weights */}
-        <div className="card">
-          <h3>
-            Metric weights — total{" "}
-            <span className={mwTot === 100 ? "" : "prio-md"}>{mwTot}</span>/100
-          </h3>
-          {METRIC_KEYS.map((k) => (
-            <div className="wrow" key={k}>
-              <label>{METRIC_LABELS[k]}</label>
-              <input
-                type="number"
-                value={mw[k] ?? 0}
-                onChange={(e) => setMw({ ...mw, [k]: +e.target.value || 0 })}
-              />
-            </div>
-          ))}
-          <button className="btn sm" onClick={saveMetricWeights}>
-            Save metric weights
-          </button>
-        </div>
-
-        {/* Engine weights */}
-        <div className="card">
-          <h3>
-            Engine weights — total{" "}
-            <span className={ewTot === 100 ? "" : "prio-md"}>{ewTot}</span>/100
-          </h3>
-          {ENGINES.map((en) => (
-            <div className="wrow" key={en}>
-              <label>{en}</label>
-              <input
-                type="number"
-                value={ew[en] ?? 0}
-                onChange={(e) => setEw({ ...ew, [en]: +e.target.value || 0 })}
-              />
-            </div>
-          ))}
-          <button className="btn sm" onClick={saveEngineWeights}>
-            Save engine weights
-          </button>
-        </div>
-
-        {/* Competitors */}
-        <div className="card">
-          <h3>Competitors</h3>
-          <table>
-            <tbody>
-              {data.competitors.length ? (
-                data.competitors.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td>
-                      <input
-                        key={(c.aliases || []).join(",")}
-                        defaultValue={(c.aliases || []).join(", ")}
-                        placeholder="Also known as…"
-                        title="Other names this competitor goes by (comma-separated)"
-                        onBlur={(e) => saveCompetitorAliases(c.id, e.target.value)}
-                      />
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
-                        className="btn sm danger"
-                        onClick={() => delCompetitor(c.id)}
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td className="muted">None</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          <div className="flex" style={{ marginTop: 10 }}>
-            <input
-              value={newComp}
-              placeholder="Add competitor name"
-              onChange={(e) => setNewComp(e.target.value)}
-            />
-            <button className="btn sm" onClick={addCompetitor}>
-              Add
-            </button>
-          </div>
-        </div>
-
-        {/* Prompt set */}
-        <div className="card" style={{ gridColumn: "1/-1" }}>
-          <h3>Prompt set ({prompts.length})</h3>
-          <div style={{ overflow: "auto" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Type</th>
-                  <th>Prompt</th>
-                  <th>Active</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {prompts.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <span className="badge">{p.code}</span>
-                    </td>
-                    <td>
-                      <select
-                        value={p.ptype || "Category"}
-                        onChange={(e) => savePrompt(p.id, "ptype", e.target.value)}
-                      >
-                        {PTYPES.map((t) => (
-                          <option key={t}>{t}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        defaultValue={p.text}
-                        style={{ width: "100%", minWidth: 240 }}
-                        onBlur={(e) => {
-                          if (e.target.value !== p.text)
-                            savePrompt(p.id, "text", e.target.value);
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={!!p.active}
-                        style={{ width: "auto" }}
-                        onChange={(e) => savePrompt(p.id, "active", e.target.checked)}
-                      />
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button className="btn sm danger" onClick={() => delPrompt(p.id)}>
-                        Del
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex" style={{ marginTop: 10 }}>
-            <input
-              value={newPrompt}
-              placeholder="New prompt text"
-              style={{ flex: 1 }}
-              onChange={(e) => setNewPrompt(e.target.value)}
-            />
-            <button className="btn sm" onClick={addPrompt}>
-              Add prompt
-            </button>
-          </div>
-          <div
-            style={{ marginTop: 12, borderTop: "1px solid var(--line)", paddingTop: 12 }}
-          >
-            <button className="btn sm" onClick={suggestPrompts} disabled={suggBusy}>
-              {suggBusy ? "✨ Thinking…" : "✨ Suggest prompts from strategy"}
-            </button>{" "}
-            <span className="muted" style={{ fontSize: 12 }}>
-              Ranked by impact on this client&#39;s strategy; you pick which to add to
-              your existing prompts.
-            </span>
-            {sugg && sugg.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div className="legend-note">
-                  Source: {suggSource === "ai" ? "AI-generated" : "strategy template"}.
-                  Ranked by impact on this client&#39;s strategy — tick the ones to add.
-                </div>
-                <div style={{ overflow: "auto" }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th></th>
-                        <th>Type</th>
-                        <th>Suggested prompt</th>
-                        <th>Impact</th>
-                        <th>Why it matters to the strategy</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sugg.map((p, i) => (
-                        <tr key={i}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              style={{ width: "auto" }}
-                              checked={suggPicks.has(i)}
-                              onChange={(e) =>
-                                setSuggPicks((prev) => {
-                                  const n = new Set(prev);
-                                  if (e.target.checked) n.add(i);
-                                  else n.delete(i);
-                                  return n;
-                                })
-                              }
-                            />
-                          </td>
-                          <td>
-                            <span className="badge">{p!.ptype}</span>
-                          </td>
-                          <td style={{ minWidth: 200 }}>{p!.text}</td>
-                          <td
-                            style={{ color: "#C9871B", whiteSpace: "nowrap" }}
-                            title={`Impact ${p!.impact}/5`}
-                          >
-                            {stars(Number(p!.impact))}
-                          </td>
-                          <td className="muted" style={{ minWidth: 240 }}>
-                            {p!.reason}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <button
-                  className="btn sm"
-                  style={{ marginTop: 8 }}
-                  onClick={addSelectedSuggestions}
-                >
-                  Add selected to prompt set
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
+        <div id="setup-docs" className="setup-section">
         {/* Strategy context */}
         <div className="card" style={{ gridColumn: "1/-1" }}>
-          <h3>Strategy context, transcripts &amp; files ({data.context.length})</h3>
+          <h3>Background documents ({data.context.length})</h3>
           <div className="legend-note">
             Add call transcripts, notes and strategy documents. The AI uses these so its
             recommendations and prompt suggestions get more informed about what this
@@ -1106,7 +1094,69 @@ export default function SettingsView() {
             documents.
           </div>
         </div>
+        </div>
+        </>
+      )}
 
+      {section === "admin" && (
+        <>
+          <div className="card stack" style={{ marginBottom: 16 }}>
+            <h3>Clients</h3>
+            <div className="legend-note">
+              Adds a client with 8 starter questions. Then work through Client setup and run
+              its first monthly check.
+            </div>
+            <div className="flex">
+              <button className="btn sm" onClick={createClient}>
+                + Add a client
+              </button>
+            </div>
+          </div>
+      {/* Users & access (account-wide) */}
+      <UsersAdmin />
+          <div className="set-grid" style={{ marginBottom: 16 }}>
+        {/* Metric weights */}
+        <div className="card">
+          <h3>
+            Metric weights — total{" "}
+            <span className={mwTot === 100 ? "" : "prio-md"}>{mwTot}</span>/100
+          </h3>
+          {METRIC_KEYS.map((k) => (
+            <div className="wrow" key={k}>
+              <label>{METRIC_LABELS[k]}</label>
+              <input
+                type="number"
+                value={mw[k] ?? 0}
+                onChange={(e) => setMw({ ...mw, [k]: +e.target.value || 0 })}
+              />
+            </div>
+          ))}
+          <button className="btn sm" onClick={saveMetricWeights}>
+            Save metric weights
+          </button>
+        </div>
+        {/* Engine weights */}
+        <div className="card">
+          <h3>
+            Engine weights — total{" "}
+            <span className={ewTot === 100 ? "" : "prio-md"}>{ewTot}</span>/100
+          </h3>
+          {ENGINES.map((en) => (
+            <div className="wrow" key={en}>
+              <label>{en}</label>
+              <input
+                type="number"
+                value={ew[en] ?? 0}
+                onChange={(e) => setEw({ ...ew, [en]: +e.target.value || 0 })}
+              />
+            </div>
+          ))}
+          <button className="btn sm" onClick={saveEngineWeights}>
+            Save engine weights
+          </button>
+        </div>
+          </div>
+          <div className="stack">
         {/* AI engines & measurement */}
         <div className="card stack" style={{ gridColumn: "1/-1" }}>
           <h3>AI engines &amp; measurement</h3>
@@ -1127,7 +1177,7 @@ export default function SettingsView() {
             })}
           </div>
           <div className="wrow" style={{ marginTop: 10, maxWidth: 340 }}>
-            <label>Samples per prompt</label>
+            <label>Samples per question</label>
             <input
               type="number"
               min={1}
@@ -1145,30 +1195,25 @@ export default function SettingsView() {
             citations.
           </div>
         </div>
-
         {/* Data tools */}
         <div className="card stack" style={{ gridColumn: "1/-1" }}>
           <h3>Data tools</h3>
           <div className="legend-note">
-            Adds blank capture rows only for prompt × engine combinations that don&#39;t
+            For entering answers by hand: adds blank rows only for question × engine combinations that don&#39;t
             have one yet — it never overwrites or deletes existing responses.
           </div>
           <div className="flex">
             <button className="btn sm" onClick={generateCapture}>
               Generate / refresh capture grid
             </button>
-            <button className="btn sm ghost" onClick={createClient}>
-              + Create new client
-            </button>
           </div>
         </div>
-
         {/* Danger zone */}
         <div
           className="card stack"
           style={{ gridColumn: "1/-1", borderColor: "#f0d4d4" }}
         >
-          <h3 style={{ color: "var(--red)" }}>Danger zone — manage this client</h3>
+          <h3 style={{ color: "var(--red)" }}>Archive or delete client</h3>
           <div className="legend-note">
             <b>Archive</b> hides this client from the brand switcher but keeps all their
             data — restore any time. <b>Delete</b> permanently removes the client and
@@ -1223,7 +1268,9 @@ export default function SettingsView() {
             </div>
           )}
         </div>
-      </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

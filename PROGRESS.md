@@ -81,3 +81,14 @@ reused untouched.
 - Open issues before switch-over: 3/28 Claude calls exceeded 150 s (search is
   slow — cap searches or use the basic tool); check whether Claude's source list
   falls back to every page read rather than only cited pages.
+
+## 2026-10-26 — Measurement v2 live; new navigation
+
+- Merged v2 measurement (queued snapshots, web search). Luminous PR re-baselined:
+  GEO 56.6; named in 100% of answers to branded questions, 0% to unbranded.
+- New navigation built from the approved mock-up: areas by monthly cycle,
+  context bar, page headers with "what to do here", tabbed AI answers and Plan,
+  Client setup checklist + Admin split out of Settings, Prompt Set tab removed,
+  Overview headline "Found by new buyers" vs "Recognised by name", Answers
+  grouped by question with "Review / override" for edits, Sources "Add to
+  plan", accepted ideas go straight into the one action plan.

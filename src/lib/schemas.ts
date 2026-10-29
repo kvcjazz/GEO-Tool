@@ -94,3 +94,13 @@ export const UsersResponseSchema = z.object({
   error: z.string().nullish(),
 });
 export type UsersResponse = z.infer<typeof UsersResponseSchema>;
+
+// geo-classify-sources
+export const ClassifySourcesSchema = z.object({
+  ok: z.boolean(),
+  sites: z
+    .array(z.object({ domain: z.string(), kind: z.string(), label: z.string().nullish() }))
+    .nullish(),
+  error: z.string().nullish(),
+  detail: z.string().nullish(),
+});

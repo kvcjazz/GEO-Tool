@@ -11,6 +11,8 @@ import {
   prAttribution,
 } from "@/lib/scoring";
 import { r1, sum } from "@/lib/format";
+import { reachSplit } from "@/lib/questions";
+import { gapSources, isTarget } from "@/lib/sources";
 import type { Run } from "@/lib/types";
 import type { DateRange } from "@/lib/types";
 
@@ -37,7 +39,7 @@ function filterRuns(runs: Run[], dr: DateRange, currentRun: Run | null): Run[] {
 }
 
 export default function DashboardView() {
-  const { brand, data, dateRange } = useAppState();
+  const { brand, data, dateRange, mode, setView, setAnswersFilter } = useAppState();
   if (!brand) return null;
   const { currentRun, responses, runs, pr, sov, history } = data;
 
@@ -46,10 +48,10 @@ export default function DashboardView() {
       <>
         <StrategyBanner />
         <div className="card">
-          <h3>Measuring {currentRun.label}…</h3>
+          <h3>Measuring the {currentRun.label.replace(" (Current)", "")} check…</h3>
           <div className="sec-sub">
-            The AI engines are being asked this client&#39;s prompts now. Results appear
-            here as they come in — follow progress in <b>Response Capture</b>.
+            The AI engines are being asked this client&#39;s questions now. Results appear
+            here as they come in — follow progress in <b>AI answers</b>.
           </div>
         </div>
       </>
@@ -65,32 +67,23 @@ export default function DashboardView() {
         <div className="card">
           <h3>Get this client live</h3>
           <div className="sec-sub">
-            No AI responses captured yet — complete these steps to populate the
-            dashboard:
+            No AI answers measured yet. Three steps to fill this page:
           </div>
           <ol className="steps">
             <li>
-              {hasStrat ? "✅" : "⬜"} Set the visibility strategy &amp; positioning{" "}
-              <span className="muted">(Settings)</span>
+              {hasStrat ? "✅" : "⬜"} Set the strategy &amp; positioning{" "}
+              <span className="muted">(Client setup)</span>
             </li>
             <li>
-              {hasPrompts ? "✅" : "⬜"} Confirm the prompt set — {data.prompts.length}{" "}
-              prompt(s); refine or use ✨ Suggest from strategy{" "}
-              <span className="muted">(Settings)</span>
+              {hasPrompts ? "✅" : "⬜"} Confirm the questions we track —{" "}
+              {data.prompts.length} so far; refine them or use ✨ Suggest questions{" "}
+              <span className="muted">(Client setup)</span>
             </li>
             <li>
-              ⬜ Generate the capture grid{" "}
-              <span className="muted">(Settings → Data tools)</span>
-            </li>
-            <li>
-              ⬜ Enter the AI answers in <b>Response Capture</b> (or seed illustrative
-              data)
+              ⬜ Click <b>Run monthly check</b> above — every live AI engine is asked every
+              question, and this page fills in over 10–20 minutes.
             </li>
           </ol>
-          <div className="legend-note">
-            Or skip steps 3–4: <b>📸 New snapshot</b> in Response Capture asks every live
-            AI engine all active prompts and fills the dashboard automatically.
-          </div>
         </div>
       </>
     );
@@ -134,10 +127,70 @@ export default function DashboardView() {
     prYM.includes((r.run_date || "").slice(0, 7)) ? runScore(r) : null,
   );
 
+  const client = mode === "client";
+  const reach = reachSplit(brand, data.prompts, responses);
+  // Competitors' own sites aren't realistic targets, so they're left out.
+  const gaps = gapSources(brand, responses)
+    .filter((g) => isTarget(g.domain, data.sourceKinds))
+    .slice(0, 3);
+  const topActions = data.opps
+    .filter((o) => o.status !== "Done")
+    .map((o) => ({ ...o, prio: o.effort ? o.impact / o.effort : 0 }))
+    .sort((a, b) => b.prio - a.prio)
+    .slice(0, 3);
+  const seeAnswers = (f: "unbranded" | "branded") => {
+    setAnswersFilter(f);
+    setView("answers", "answers");
+  };
+
   return (
     <>
-      <StrategyBanner />
-      <div className="kpi-row">
+      <div className="reach-row">
+        <div className="card reach">
+          <h3 style={{ marginBottom: 0 }}>Found by new buyers</h3>
+          {reach.newBuyers.answers ? (
+            <>
+              <div className={`num ${reach.newBuyers.pct < 20 ? "low" : ""}`}>
+                {reach.newBuyers.pct}%
+              </div>
+              <p>
+                Named in {reach.newBuyers.named} of {reach.newBuyers.answers} answers to the{" "}
+                {reach.newBuyers.questions} questions that don&#39;t mention {brand.name}.
+              </p>
+              {!client && (
+                <button type="button" className="linkbtn" onClick={() => seeAnswers("unbranded")}>
+                  See these answers →
+                </button>
+              )}
+            </>
+          ) : (
+            <p style={{ marginTop: 8 }}>
+              Every tracked question names {brand.name}. Add category questions (“best … in
+              …”) in Client setup to measure how new buyers find you.
+            </p>
+          )}
+        </div>
+        <div className="card reach">
+          <h3 style={{ marginBottom: 0 }}>Recognised by name</h3>
+          {reach.byName.answers ? (
+            <>
+              <div className={`num ${reach.byName.pct >= 80 ? "high" : ""}`}>
+                {reach.byName.pct}%
+              </div>
+              <p>
+                Named in {reach.byName.named} of {reach.byName.answers} answers to the{" "}
+                {reach.byName.questions} questions that ask about {brand.name} directly.
+              </p>
+              {!client && (
+                <button type="button" className="linkbtn" onClick={() => seeAnswers("branded")}>
+                  See these answers →
+                </button>
+              )}
+            </>
+          ) : (
+            <p style={{ marginTop: 8 }}>No tracked question asks about {brand.name} by name.</p>
+          )}
+        </div>
         <div className="card score-card">
           <h3>Luminous GEO Score</h3>
           <div className="score-big">
@@ -150,12 +203,9 @@ export default function DashboardView() {
             </div>
           )}
           {conf && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#9fb3da" }}>
-              Confidence:{" "}
-              <b style={{ color: conf.color }}>{conf.label}</b>{" "}
+            <div style={{ marginTop: 8, fontSize: 12, color: "#c4d2ee" }}>
+              Confidence: <b style={{ color: conf.color }}>{conf.label}</b>{" "}
               <span
-                className="muted"
-                style={{ color: "#8b9bc0" }}
                 title="Based on how consistently the AI engines gave the same answer across repeated samples"
               >
                 · {conf.covered}/{conf.total} sampled
@@ -163,12 +213,40 @@ export default function DashboardView() {
             </div>
           )}
         </div>
-        <Kpi l="Mention Rate" v={blended.mention} />
-        <Kpi l="Share of Voice" v={blended.sov} />
-        <Kpi l="Citation Share" v={blended.citation} />
       </div>
 
       <div className="two">
+        <div className="card">
+          <h3>{client ? "What we're working on" : "Top actions"}</h3>
+          {!client && gaps.length > 0 && (
+            <div className="action-item">
+              <span className="k" style={{ color: "#6e4a0c" }}>From this check</span>
+              <b>Get onto the sites AI cites when it doesn&#39;t name {brand.name}</b>
+              <span className="d">
+                {gaps.map((g) => g.domain).join(", ")} — cited{" "}
+                {gaps.map((g) => g.count).join(", ")} times in those answers.
+              </span>
+              <button type="button" className="linkbtn" onClick={() => setView("answers", "sources")}>
+                See all sources →
+              </button>
+            </div>
+          )}
+          {topActions.map((o) => (
+            <div className="action-item" key={o.id}>
+              <span className="k">{o.status || "Not started"}</span>
+              <b>{o.title}</b>
+              {o.linked_gap && <span className="d">Moves {o.linked_gap}</span>}
+            </div>
+          ))}
+          {!topActions.length && !gaps.length && (
+            <p className="muted" style={{ fontSize: 13 }}>
+              No open actions yet.
+            </p>
+          )}
+          <button type="button" className="linkbtn" onClick={() => setView("plan", "actions")}>
+            {client ? "See the full plan →" : "Open the action plan →"}
+          </button>
+        </div>
         <div className="card">
           <h3>GEO Score by engine</h3>
           <div className="chartbox">
@@ -187,6 +265,16 @@ export default function DashboardView() {
             />
           </div>
         </div>
+      </div>
+
+      <div className="kpi-row">
+        <Kpi l="Mention Rate" v={blended.mention} />
+        <Kpi l="Share of Voice" v={blended.sov} />
+        <Kpi l="Citation Share" v={blended.citation} />
+        <Kpi l="Position / Prominence" v={blended.position} />
+      </div>
+
+      <div className="two">
         <div className="card">
           <div
             style={{
@@ -242,9 +330,6 @@ export default function DashboardView() {
             )}
           </div>
         </div>
-      </div>
-
-      <div className="two">
         <div className="card">
           <h3>Share of voice vs competitors</h3>
           <div className="chartbox">
@@ -272,11 +357,14 @@ export default function DashboardView() {
           </div>
           <div className="legend-note">
             {brand.name}: <b>{r1(sovTotal ? (bm / sovTotal) * 100 : 0)}%</b> of category
-            mentions this run.
+            mentions this check.
           </div>
         </div>
+      </div>
+
+      <div className="two">
         <div className="card">
-          <h3>Metric breakdown (blended)</h3>
+          <h3>How the score is made up</h3>
           <table>
             <thead>
               <tr>
@@ -299,9 +387,12 @@ export default function DashboardView() {
             <b>
               {att.attr} of {att.cited}
             </b>{" "}
-            cited AI answers (<b>{att.pct}%</b>) are attributed to earned PR — see{" "}
-            <b>PR &amp; Influence</b>.
+            cited AI answers (<b>{att.pct}%</b>) are credited to earned PR — see{" "}
+            <b>Coverage &amp; impact</b>.
           </div>
+        </div>
+        <div>
+          <StrategyBanner />
         </div>
       </div>
     </>

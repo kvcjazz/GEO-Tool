@@ -2,7 +2,6 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { useAppState } from "@/state/AppState";
-import { StrategyBanner } from "@/components/ui";
 import { playbookFor } from "@/lib/playbooks";
 import { callFn } from "@/lib/callFn";
 import { AdviseTailorSchema } from "@/lib/schemas";
@@ -91,12 +90,6 @@ export default function BacklogView() {
 
   return (
     <>
-      <StrategyBanner />
-      <div className="sec-title">Opportunity Backlog — {brand.name}</div>
-      <div className="sec-sub">
-        Prioritised by impact ÷ effort. Click ▸ for step-by-step execution guidance
-        {ro ? "" : "; use ✨ Tailor for AI guidance shaped to this client's strategy"}.
-      </div>
       <div className="card" style={{ overflow: "auto" }}>
         <table>
           <thead>
