@@ -92,3 +92,17 @@ reused untouched.
   Overview headline "Found by new buyers" vs "Recognised by name", Answers
   grouped by question with "Review / override" for edits, Sources "Add to
   plan", accepted ideas go straight into the one action plan.
+
+## 2026-10-29 — Titles to target
+
+- New **Plan → Titles to target** tab (`src/views/TargetsView.tsx`): which
+  cited sites to target, judged by a senior-PR review (`geo-targets`, deployed)
+  against the client's story. Team can add titles (to the media list), mark a
+  relationship or a no-go; realistic titles feed the Radar.
+- `geo_target_titles` table + RLS (per-client, same as other `geo_` tables) —
+  applied to the live project.
+- Settings: brand saves now say "Not saved" when the database refuses the
+  update (no edit access) instead of reporting success.
+- Not yet verified end-to-end in a signed-in browser (the build container can't
+  reach the Supabase URL).
+

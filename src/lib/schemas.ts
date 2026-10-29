@@ -104,3 +104,44 @@ export const ClassifySourcesSchema = z.object({
   error: z.string().nullish(),
   detail: z.string().nullish(),
 });
+
+// geo-measure, direct mode (nothing saved) — used by the Titles to target probe.
+export const MeasureDirectSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().nullish(),
+  detail: z.string().nullish(),
+  result: z
+    .object({
+      mentioned: z.boolean().nullish(),
+      competitor_mentions: z.number().nullish(),
+      web_search: z.boolean().nullish(),
+      runs: z
+        .array(z.object({ citations: z.array(z.string()).nullish(), searched: z.boolean().nullish() }))
+        .nullish(),
+    })
+    .nullish(),
+});
+
+// geo-targets (senior-PR review of the titles to target)
+export const TargetVerdictSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  kind: z.string().nullish(),
+  verdict: z.string(),
+  priority: z.number().nullish(),
+  route: z.string().nullish(),
+  angle: z.string().nullish(),
+  reason: z.string().nullish(),
+  needs: z.string().nullish(),
+  known: z.boolean().nullish(),
+});
+
+export const TargetsResponseSchema = z.object({
+  ok: z.boolean(),
+  model: z.string().nullish(),
+  titles: z.array(TargetVerdictSchema).nullish(),
+  missing: z.array(z.string()).nullish(),
+  error: z.string().nullish(),
+  detail: z.string().nullish(),
+});
+export type TargetVerdict = z.infer<typeof TargetVerdictSchema>;

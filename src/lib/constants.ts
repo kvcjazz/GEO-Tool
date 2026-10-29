@@ -170,6 +170,11 @@ export const AREAS: Area[] = [
         hint: "New suggestions from the Radar briefing. Add the good ones to the plan — rating them teaches the Radar.",
       },
       {
+        id: "titles",
+        label: "Titles to target",
+        hint: "The publications and sites the AI engines actually cite for this client, judged for what's realistically winnable with the story you have.",
+      },
+      {
         id: "actions",
         label: "Action plan",
         hint: "Everything we've committed to, ranked by impact ÷ effort.",

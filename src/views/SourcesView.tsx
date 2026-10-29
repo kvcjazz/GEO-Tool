@@ -5,7 +5,8 @@ import { host } from "@/lib/format";
 import { KIND_LABELS, citedSources, gapSources, isOwnSite, isTarget as notCompetitor } from "@/lib/sources";
 
 export default function SourcesView() {
-  const { brand, data, mode, sb, toast, reload, setSourceKind, classifying } = useAppState();
+  const { brand, data, mode, sb, toast, reload, setSourceKind, classifying, setView } =
+    useAppState();
   if (!brand) return null;
   const ro = mode === "client";
   const kinds = data.sourceKinds;
@@ -119,6 +120,20 @@ export default function SourcesView() {
           Sites the engines cite when they answer without naming {brand.name}, leaving out
           competitors&#39; own sites — the clearest places to aim earned coverage.
           {classifying && <> Checking which sites are competitors…</>}
+          {!ro && (
+            <>
+              {" "}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setView("plan", "titles");
+                }}
+              >
+                Which of these are realistic for {brand.name}? → Titles to target
+              </a>
+            </>
+          )}
         </div>
         <table>
           <tbody>

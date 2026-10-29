@@ -12,6 +12,7 @@ import SourcesView from "@/views/SourcesView";
 import PRView from "@/views/PRView";
 import ListeningView from "@/views/ListeningView";
 import SettingsView from "@/views/SettingsView";
+import TargetsView from "@/views/TargetsView";
 
 /** What renders for each area (and tab, where an area has tabs). */
 function AreaBody({ area, tab }: { area: string; tab: string }) {
@@ -19,7 +20,7 @@ function AreaBody({ area, tab }: { area: string; tab: string }) {
     case "answers":
       return tab === "sources" ? <SourcesView /> : tab === "mentions" ? <ListeningView /> : <CaptureView />;
     case "plan":
-      return tab === "actions" ? <BacklogView /> : <PlanningView />;
+      return tab === "actions" ? <BacklogView /> : tab === "titles" ? <TargetsView /> : <PlanningView />;
     case "coverage":
       return <PRView />;
     case "setup":
