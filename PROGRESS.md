@@ -49,3 +49,11 @@ reused untouched.
 - Optional roadmap (from the handoff): real per-client accounts + roles, branded
   PDF/report exports, moving AI logic into Next.js route handlers, adding the
   remaining engine API keys in Supabase.
+
+## 2026-11-05 — Fix "delete client"
+
+- Deleting a client failed with an FK violation on `geo_media_targets`
+  (also latent on `geo_radar_items`, `geo_news`). Those FKs now cascade and
+  `geo_delete_brand` clears every brand-linked table. Applied live via
+  migration `geo_delete_brand_fix_fk_cascade`; SQL kept in
+  `supabase/migrations/20261105_geo_delete_brand_fix_fk_cascade.sql`.
