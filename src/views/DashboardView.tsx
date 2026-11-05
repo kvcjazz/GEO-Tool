@@ -5,7 +5,10 @@ import { StrategyBanner, Kpi, MetricRow, DateFilter } from "@/components/ui";
 import { Bar, Line, BAR_OPTS, LINE_OPTS, barOpts } from "@/components/charts";
 import {
   brandMentionsTotal,
+  categoryBrands,
   computeAll,
+  missingEntities,
+  shareOfVoice,
   confLabel,
   metricWeights,
   prAttribution,
@@ -115,6 +118,14 @@ export default function DashboardView() {
     ...sov.map((s) => ({ player: s.player, mentions: s.mentions, me: false })),
   ].sort((a, b) => b.mentions - a.mentions);
   const sovTotal = sum(sovRows.map((s) => s.mentions));
+  // Share of voice v2: every brand the engines name on questions that don't
+  // name the client, recommended mentions counting double.
+  const named = categoryBrands(responses, brand.name);
+  const top = named.slice(0, 8);
+  const me = named.find((b) => b.client);
+  if (me && !top.includes(me)) top[top.length - 1] = me;
+  const brandedSov = shareOfVoice(responses, true);
+  const unread = missingEntities(responses);
   const prCited = pr.filter((p) => p.cited).length;
   const att = prAttribution(responses);
   const conf = confLabel(responses);
@@ -331,21 +342,32 @@ export default function DashboardView() {
           </div>
         </div>
         <div className="card">
-          <h3>Share of voice vs competitors</h3>
+          <h3>{top.length ? "Share of voice — every brand the engines name" : "Share of voice vs competitors"}</h3>
           <div className="chartbox">
             <Bar
-              data={{
-                labels: sovRows.map((s) => s.player),
-                datasets: [
-                  {
-                    data: sovRows.map((s) => s.mentions),
-                    backgroundColor: sovRows.map((s) =>
-                      s.me ? "#1A2B4A" : "#9db6e8",
-                    ),
-                    borderRadius: 6,
-                  },
-                ],
-              }}
+              data={
+                top.length
+                  ? {
+                      labels: top.map((b) => b.name),
+                      datasets: [
+                        {
+                          data: top.map((b) => r1(b.share)),
+                          backgroundColor: top.map((b) => (b.client ? "#1A2B4A" : "#9db6e8")),
+                          borderRadius: 6,
+                        },
+                      ],
+                    }
+                  : {
+                      labels: sovRows.map((s) => s.player),
+                      datasets: [
+                        {
+                          data: sovRows.map((s) => s.mentions),
+                          backgroundColor: sovRows.map((s) => (s.me ? "#1A2B4A" : "#9db6e8")),
+                          borderRadius: 6,
+                        },
+                      ],
+                    }
+              }
               options={barOpts({
                 indexAxis: "y",
                 scales: {
@@ -356,8 +378,25 @@ export default function DashboardView() {
             />
           </div>
           <div className="legend-note">
-            {brand.name}: <b>{r1(sovTotal ? (bm / sovTotal) * 100 : 0)}%</b> of category
-            mentions this check.
+            {top.length ? (
+              <>
+                {brand.name}: <b>{r1(me?.share ?? 0)}%</b> of all brand mentions in answers to
+                questions that don&#39;t name {brand.name} ({named.length} brands named;
+                recommendations count double).
+                {brandedSov != null && (
+                  <>
+                    {" "}
+                    On questions that do name {brand.name}: <b>{r1(brandedSov)}%</b>.
+                  </>
+                )}
+                {unread > 0 && <> Still reading brands in {unread} answers.</>}
+              </>
+            ) : (
+              <>
+                {brand.name}: <b>{r1(sovTotal ? (bm / sovTotal) * 100 : 0)}%</b> of mentions
+                against tracked competitors this check.
+              </>
+            )}
           </div>
         </div>
       </div>

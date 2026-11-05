@@ -2,14 +2,21 @@
 // these values or the default weights: the scoring model is the credibility
 // core of the product and must reproduce the prototype exactly.
 
+// Microsoft Copilot is not listed: it has no public API, and the "Copilot"
+// the pilot measured was the same OpenAI model as ChatGPT asked twice, which
+// double-counted ChatGPT. Its old answers are ignored (see measuredOnly) and
+// its weight was folded into ChatGPT (migration 20261105130000).
 export const ENGINES = [
   "ChatGPT",
   "Google AI / Gemini",
   "Perplexity",
-  "Copilot",
   "Claude",
   "Grok",
 ] as const;
+/** Drops answers from engines no longer measured (the old "Copilot" rows). */
+export function measuredOnly<T extends { engine: string }>(rows: T[]): T[] {
+  return rows.filter((r) => (ENGINES as readonly string[]).includes(r.engine));
+}
 export type Engine = (typeof ENGINES)[number];
 
 export const PROM: Record<string, number> = {
@@ -60,10 +67,9 @@ export const DEFAULT_METRIC_WEIGHTS: MetricWeights = {
 };
 
 export const DEFAULT_ENGINE_WEIGHTS: Record<string, number> = {
-  ChatGPT: 30,
+  ChatGPT: 42, // includes the 12 that was Copilot's (Copilot runs on OpenAI models)
   "Google AI / Gemini": 22,
   Perplexity: 18,
-  Copilot: 12,
   Claude: 10,
   Grok: 8,
 };
@@ -91,7 +97,15 @@ export const METRIC_LABELS: Record<keyof MetricWeights, string> = {
 // prove impact — plus Setup and Admin. Each area says what question it answers
 // and what to do there, so nobody has to guess what a tab is for.
 
-export type AreaId = "overview" | "answers" | "plan" | "coverage" | "setup" | "admin";
+export type AreaId =
+  | "clients"
+  | "overview"
+  | "answers"
+  | "plan"
+  | "coverage"
+  | "report"
+  | "setup"
+  | "admin";
 
 /** The main button in an area's page header. */
 export type AreaAction = "snapshot" | "remeasure" | "logPlacement";
@@ -103,7 +117,7 @@ export type Area = {
   clientLabel?: string;
   /** One line under the label in the sidebar. */
   desc: string;
-  group: "cycle" | "setup";
+  group: "home" | "cycle" | "setup";
   /** Shown in client (presentation) view. */
   client: boolean;
   /** What the page answers. */
@@ -116,6 +130,16 @@ export type Area = {
 };
 
 export const AREAS: Area[] = [
+  {
+    id: "clients",
+    label: "All clients",
+    desc: "Every client at a glance",
+    group: "home",
+    // Never shown when presenting to a client: it lists other clients.
+    client: false,
+    question: "How is each client doing, and which ones need attention?",
+    todo: "Open the client you want to work on. Flags show what needs doing.",
+  },
   {
     id: "overview",
     label: "Overview",
@@ -170,6 +194,11 @@ export const AREAS: Area[] = [
         hint: "New suggestions from the Radar briefing. Add the good ones to the plan — rating them teaches the Radar.",
       },
       {
+        id: "titles",
+        label: "Titles to target",
+        hint: "The publications and sites the AI engines actually cite for this client, judged for what's realistically winnable with the story you have.",
+      },
+      {
         id: "actions",
         label: "Action plan",
         hint: "Everything we've committed to, ranked by impact ÷ effort.",
@@ -185,6 +214,16 @@ export const AREAS: Area[] = [
     question: "Is our PR coverage being cited by the AI engines?",
     todo: "Log each placement — the tool checks every AI answer for it automatically.",
     action: { kind: "logPlacement", label: "Log a placement" },
+  },
+  {
+    id: "report",
+    label: "Monthly report",
+    desc: "Client-ready summary to send",
+    group: "cycle",
+    client: true,
+    question: "How visible is this client in AI answers this month, what changed, and is the PR working?",
+    clientQuestion: "Your AI visibility this month, what changed, and what PR is doing about it.",
+    todo: "Read it through after each monthly check, then Print / save as PDF and send it to the client.",
   },
   {
     id: "setup",

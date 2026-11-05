@@ -14,7 +14,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { callFn } from "@/lib/callFn";
 import { ClassifySourcesSchema, EngineStatusSchema } from "@/lib/schemas";
 import { gapSources } from "@/lib/sources";
-import { AREAS, CLIENT_AREAS, LEGACY_VIEWS } from "@/lib/constants";
+import { AREAS, CLIENT_AREAS, ENGINES, LEGACY_VIEWS, measuredOnly } from "@/lib/constants";
+import { clientSlug, findClient, recentClients, rememberClient } from "@/lib/clientIdentity";
 import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
 import type { Scorable } from "@/lib/scoring";
@@ -36,9 +37,10 @@ import type {
   Response,
   Run,
   SourceKind,
+  TargetTitle,
 } from "@/lib/types";
 
-type BrandData = {
+export type BrandData = {
   competitors: Competitor[];
   prompts: Prompt[];
   runs: Run[];
@@ -48,6 +50,8 @@ type BrandData = {
   history: Record<string, Scorable[]>;
   /** What each cited site is to this client, keyed by domain. */
   sourceKinds: Record<string, SourceKind>;
+  /** Titles to target: the senior-PR review of cited sites, plus the team's calls. */
+  targets: TargetTitle[];
   sov: { player: string; mentions: number }[];
   opps: Opportunity[];
   pr: PrActivity[];
@@ -67,6 +71,7 @@ const EMPTY: BrandData = {
   responses: [],
   history: {},
   sourceKinds: {},
+  targets: [],
   sov: [],
   opps: [],
   pr: [],
@@ -121,6 +126,8 @@ type Ctx = {
   setSourceKind: (domain: string, kind: string, label?: string | null) => Promise<void>;
   /** True while cited sites are being classified. */
   classifying: boolean;
+  /** Merge saved Titles to target rows into the loaded data. */
+  mergeTargets: (rows: TargetTitle[]) => void;
 
   /** Queued measurements for the current run, kept fresh while any are in flight. */
   jobs: MeasureJob[];
@@ -130,6 +137,14 @@ type Ctx = {
   remeasure: () => Promise<void>;
   /** Measure only questions the current check has no answers for yet. */
   measureNewQuestions: () => Promise<void>;
+  /** Cancel every queued or running measurement of the current check. */
+  stopMeasuring: () => Promise<void>;
+  /** Active questions missing an answer from at least one live engine in the current check. */
+  unmeasured: Prompt[];
+  /** Question × live-engine measurements missing from the current check. */
+  missingMeasurements: number;
+  /** Engines that will actually be asked (have a key). */
+  liveEngineCount: number;
 
   toast: (m: string) => void;
   toastMsg: string;
@@ -176,6 +191,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [toastMsg, setToastMsg] = useState("");
   const [toastShow, setToastShow] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The ?client= value the app was opened with (read once, before we rewrite it).
+  const initialClientParam = useRef<string | null>(searchParams.get("client"));
 
   // Keep the latest selected brand id for reload() without re-creating callbacks.
   const brandIdRef = useRef<string | null>(null);
@@ -241,6 +259,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         radar,
         news,
         kinds,
+        targets,
       ] = await Promise.all([
         sb.from("geo_competitors").select("*").eq("brand_id", id),
         sb.from("geo_prompts").select("*").eq("brand_id", id).order("sort"),
@@ -274,6 +293,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           .order("created_at", { ascending: false })
           .limit(20),
         sb.from("geo_source_kinds").select("*").eq("brand_id", id),
+        sb.from("geo_target_titles").select("*").eq("brand_id", id),
       ]);
 
       const allNews = (news.data || []) as NewsItem[];
@@ -302,7 +322,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                 )
             : Promise.resolve({ data: [] }),
         ]);
-        responses = (resp.data || []) as Response[];
+        responses = measuredOnly((resp.data || []) as Response[]);
         sov =
           currentRun.method === "v2"
             ? sovFromSamples(responses, (comps.data || []) as Competitor[])
@@ -310,7 +330,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                 player: s.player,
                 mentions: s.mentions,
               }));
-        for (const row of (hist.data || []) as (Scorable & { run_id: string })[]) {
+        for (const row of measuredOnly((hist.data || []) as (Scorable & { run_id: string })[])) {
           (history[row.run_id] ||= []).push(row);
         }
       }
@@ -330,6 +350,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         sourceKinds: Object.fromEntries(
           ((kinds.data || []) as SourceKind[]).map((k) => [k.domain, k]),
         ),
+        targets: (targets.data || []) as TargetTitle[],
         sov,
         opps: (opps.data || []) as Opportunity[],
         pr: (pr.data || []) as PrActivity[],
@@ -358,7 +379,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     if (active.length) {
       const currentId = brandIdRef.current;
       const keep = currentId && active.some((b) => b.id === currentId);
-      await selectBrand(keep ? currentId! : active[0].id);
+      // First load: the client named in the address, else the last one used here.
+      const fromUrl = findClient(active, initialClientParam.current);
+      const recent = recentClients().find((id) => active.some((b) => b.id === id));
+      await selectBrand(keep ? currentId! : fromUrl?.id || recent || active[0].id);
     } else {
       setBrand(null);
       setData(EMPTY);
@@ -458,6 +482,38 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setJobsKey((k) => k + 1);
   }, [data.currentRun, samples, sb, toast]);
 
+  const stopMeasuring = useCallback(async () => {
+    const run = data.currentRun;
+    if (!run) return;
+    if (
+      !window.confirm(
+        "Stop measuring now? Measurements still waiting are cancelled straight away; ones " +
+          "already running finish but aren't saved. Use Resume later to measure only what's missing.",
+      )
+    )
+      return;
+    const { data: n, error } = await sb.rpc("geo_cancel_run", { rid: run.id });
+    if (error) return toast("Couldn't stop: " + error.message);
+    toast(n ? `Stopped — ${n} measurements cancelled` : "Nothing was running");
+    setJobsKey((k) => k + 1);
+    await reload();
+  }, [data.currentRun, sb, toast, reload]);
+
+  const liveEngineList = useMemo(() => ENGINES.filter((e) => engines[e]), [engines]);
+  const liveEngineCount = liveEngineList.length;
+  const { unmeasured, missingMeasurements } = useMemo(() => {
+    if (!data.currentRun) return { unmeasured: [] as Prompt[], missingMeasurements: 0 };
+    const answered = new Set(data.responses.map((r) => r.prompt_id + "|" + r.engine));
+    let missing = 0;
+    const list = data.prompts.filter((p) => {
+      if (!p.active) return false;
+      const n = liveEngineList.filter((e) => !answered.has(p.id + "|" + e)).length;
+      missing += n;
+      return n > 0;
+    });
+    return { unmeasured: list, missingMeasurements: missing };
+  }, [data.currentRun, data.responses, data.prompts, liveEngineList]);
+
   // ---- Cited-site classification --------------------------------------------
   // The sites answers cite are classified once per client (competitor,
   // publication, directory…) so competitors drop out of "where to earn
@@ -494,6 +550,14 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     },
     [brand, sb, toast],
   );
+
+  const mergeTargets = useCallback((rows: TargetTitle[]) => {
+    setData((prev) => {
+      const byId = new Map(prev.targets.map((t) => [t.id, t]));
+      for (const r of rows) byId.set(r.id, r);
+      return { ...prev, targets: [...byId.values()] };
+    });
+  }, []);
 
   const setSourceKind = useCallback(
     (domain: string, kind: string, label?: string | null) =>
@@ -630,6 +694,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       if (session) setUserEmail(session.user.email || "");
       await loadEngines();
       await loadBrands();
+      // Team view opens on All clients unless a link named the client.
+      if (!cancelled && !initialClientParam.current && mode === "team") setViewState("clients");
       if (!cancelled) setReady(true);
     })();
     return () => {
@@ -637,6 +703,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The address bar and tab title always name the client being worked on, so
+  // links and bookmarks reopen it and browser tabs can be told apart.
+  useEffect(() => {
+    if (!brand) return;
+    rememberClient(brand.id);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("client", clientSlug(brand.name) || brand.id);
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch {
+      // Not in a browser.
+    }
+    document.title = `${brand.name} · Luminous GEO`;
+  }, [brand]);
 
   const value: Ctx = {
     ready,
@@ -670,7 +751,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     startSnapshot,
     remeasure,
     measureNewQuestions,
+    stopMeasuring,
+    unmeasured,
+    missingMeasurements,
+    liveEngineCount,
     setSourceKind,
+    mergeTargets,
     classifying,
     toast,
     toastMsg,

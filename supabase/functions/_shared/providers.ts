@@ -64,12 +64,15 @@ export const MODEL_CHAIN: Record<ProviderId, string[]> = {
   xai: ["grok-4.6", "grok-4.5", "grok-4.3", "grok-4"],
 };
 
-/** The engine names the UI shows, mapped to the provider that answers them. */
+/**
+ * The engine names the UI shows, mapped to the provider that answers them.
+ * Microsoft Copilot has no public API, so it is not measured (it used to be
+ * the OpenAI model again, which double-counted ChatGPT).
+ */
 export const ENGINE_PROVIDER: Record<string, ProviderId> = {
   ChatGPT: "openai",
   "Google AI / Gemini": "gemini",
   Perplexity: "perplexity",
-  Copilot: "openai",
   Claude: "anthropic",
   Grok: "xai",
 };
@@ -79,7 +82,6 @@ export const ENGINES: string[] = [
   "ChatGPT",
   "Google AI / Gemini",
   "Perplexity",
-  "Copilot",
   "Claude",
   "Grok",
 ];
@@ -133,7 +135,6 @@ export function providerFor(engine: string): ProviderId | null {
   if (e.includes("chatgpt") || e.includes("gpt") || e.includes("openai")) {
     return "openai";
   }
-  if (e.includes("copilot")) return "openai";
   return null;
 }
 
@@ -152,7 +153,19 @@ export type ModelResult = {
 export type CallOptions = {
   /** Answer with the provider's own web-search tool switched on. */
   webSearch?: boolean;
+  /**
+   * The buyer's country (ISO 3166-1 alpha-2, e.g. "GB"), passed to the search
+   * as an approximate user location where the provider supports it (Claude,
+   * OpenAI, Perplexity). Gemini and xAI have no such option and ignore it.
+   */
+  country?: string | null;
 };
+
+/** A valid upper-case ISO 3166-1 alpha-2 code, or null. */
+export function countryCode(c: unknown): string | null {
+  const v = String(c ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(v) ? v : null;
+}
 
 type Attempt = {
   ok: boolean;
@@ -198,8 +211,18 @@ function isModelUnavailable(status: number, message: string): boolean {
  * model chain twice over.
  */
 function isBillingBlock(message: string): boolean {
-  return /(insufficient_quota|exceeded your current quota|quota|billing|payment required|credit balance|no credits)/i
+  return /(insufficient_quota|exceeded your current quota|quota|billing|payment required|credit balance|no credits|usage limits?)/i
     .test(message || "");
+}
+
+/** Plain-English fix for an account-level block, by kind. */
+function billingAdvice(provider: ProviderId, message: string): string {
+  if (/usage limits?/i.test(message)) {
+    return `the ${provider} account has reached the monthly spend limit set on it — ` +
+      `raise the limit in that provider's console (Anthropic: Settings → Limits)`;
+  }
+  return `${KEY_ENV[provider]} is valid but the ${provider} account has no credit/quota — ` +
+    `add billing with that provider`;
 }
 
 function errText(status: number, payload: unknown): string {
@@ -232,6 +255,26 @@ const SEARCH_TIMEOUT_MS = 90_000;
 /** Status used for an abandoned (timed-out) search call; not retried. */
 const TIMED_OUT = 408;
 
+/**
+ * Current Claude models think before answering by default, and thinking counts
+ * against max_tokens. A small cap (the old 800–1500) could be spent entirely on
+ * thinking, leaving an empty reply. Claude calls get at least this much room;
+ * only tokens actually generated are billed.
+ */
+const ANTHROPIC_MIN_TOKENS = 16000;
+
+/** A Claude reply with no text: say why instead of passing on an empty answer. */
+function emptyClaude(stopReason: string | undefined): Attempt {
+  return fail(
+    422,
+    stopReason === "max_tokens"
+      ? "the reply was cut off before any text (token limit reached while thinking)"
+      : stopReason === "refusal"
+      ? "the model declined to answer"
+      : `empty reply (stop_reason: ${stopReason || "unknown"})`,
+  );
+}
+
 const fail = (status: number, message: string): Attempt => ({
   ok: false,
   status,
@@ -258,12 +301,19 @@ async function anthropicSearch(
   prompt: string,
   model: string,
   maxTokens: number,
+  country: string | null,
 ): Promise<Attempt> {
-  const tool = { type: "web_search_20250305", name: "web_search", max_uses: 3 };
+  const tool = {
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 3,
+    ...(country ? { user_location: { type: "approximate", country } } : {}),
+  };
   const messages: { role: string; content: unknown }[] = [
     { role: "user", content: prompt },
   ];
   const blocks: AnthropicBlock[] = [];
+  let lastStop: string | undefined;
   for (let turn = 0; turn < 3; turn++) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -272,7 +322,12 @@ async function anthropicSearch(
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ model, max_tokens: maxTokens, messages, tools: [tool] }),
+      body: JSON.stringify({
+        model,
+        max_tokens: Math.max(maxTokens, ANTHROPIC_MIN_TOKENS),
+        messages,
+        tools: [tool],
+      }),
       signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     });
     const j = (await readJson(r)) as {
@@ -281,6 +336,7 @@ async function anthropicSearch(
     };
     if (!r.ok) return fail(r.status, errText(r.status, j));
     blocks.push(...(j.content || []));
+    lastStop = j.stop_reason;
     if (j.stop_reason !== "pause_turn") break;
     messages.push({ role: "assistant", content: j.content || [] });
   }
@@ -288,6 +344,7 @@ async function anthropicSearch(
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
     .join("");
+  if (!text.trim()) return emptyClaude(lastStop);
   // Only the sources Claude cites in its answer — not every page it read.
   const citations = blocks
     .flatMap((b) => (b.type === "text" ? (b.citations || []).map((c) => c.url || "") : []))
@@ -305,11 +362,16 @@ async function responsesSearch(
   key: string,
   prompt: string,
   model: string,
+  country: string | null = null,
 ): Promise<Attempt> {
+  const tool = {
+    type: "web_search",
+    ...(country ? { user_location: { type: "approximate", country } } : {}),
+  };
   const r = await fetch(url, {
     method: "POST",
     headers: { authorization: "Bearer " + key, "content-type": "application/json" },
-    body: JSON.stringify({ model, input: prompt, tools: [{ type: "web_search" }] }),
+    body: JSON.stringify({ model, input: prompt, tools: [tool] }),
     signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
   const j = (await readJson(r)) as {
@@ -358,9 +420,10 @@ async function attempt(
   model: string,
   maxTokens: number,
   webSearch: boolean,
+  country: string | null,
 ): Promise<Attempt> {
   if (provider === "anthropic") {
-    if (webSearch) return anthropicSearch(key, prompt, model, maxTokens);
+    if (webSearch) return anthropicSearch(key, prompt, model, maxTokens, country);
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -370,23 +433,25 @@ async function attempt(
       },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens,
+        max_tokens: Math.max(maxTokens, ANTHROPIC_MIN_TOKENS),
         messages: [{ role: "user", content: prompt }],
       }),
     });
     const j = (await readJson(r)) as {
       content?: { type?: string; text?: string }[];
+      stop_reason?: string;
     };
     if (!r.ok) return fail(r.status, errText(r.status, j));
     const text = (j.content || [])
       .filter((c) => !c.type || c.type === "text")
       .map((c) => c.text || "")
       .join("");
+    if (!text.trim()) return emptyClaude(j.stop_reason);
     return { ok: true, status: r.status, text, citations: [], message: "" };
   }
 
   if (webSearch && provider === "openai") {
-    return responsesSearch("https://api.openai.com/v1/responses", key, prompt, model);
+    return responsesSearch("https://api.openai.com/v1/responses", key, prompt, model, country);
   }
   if (webSearch && provider === "xai") {
     return responsesSearch("https://api.x.ai/v1/responses", key, prompt, model);
@@ -410,6 +475,9 @@ async function attempt(
       body: JSON.stringify({
         model,
         messages: [{ role: "user", content: prompt }],
+        ...(provider === "perplexity" && country
+          ? { web_search_options: { user_location: { country } } }
+          : {}),
       }),
     });
     const j = (await readJson(r)) as {
@@ -476,6 +544,8 @@ export async function callModel(
   // Perplexity searches on every call; the others only when asked.
   const webSearch = !!opts.webSearch && provider !== "perplexity";
   const searched = webSearch || provider === "perplexity";
+  // Location only matters when the answer is searched.
+  const country = searched ? countryCode(opts.country) : null;
   let lastError = "";
   let lastModel = "";
   for (const model of candidates(provider)) {
@@ -483,7 +553,7 @@ export async function callModel(
     for (let tries = 0; tries < 2; tries++) {
       let a: Attempt;
       try {
-        a = await attempt(provider, key, prompt, model, maxTokens, webSearch);
+        a = await attempt(provider, key, prompt, model, maxTokens, webSearch, country);
       } catch (e) {
         const timedOut = e instanceof DOMException && e.name === "TimeoutError";
         a = timedOut
@@ -503,13 +573,18 @@ export async function callModel(
           citations: [],
           model,
           searched,
-          error: `${KEY_ENV[provider]} is valid but the ${provider} account has no ` +
-            `credit/quota — add billing with that provider. (${a.message})`,
+          error: `${billingAdvice(provider, a.message)}. (${a.message})`,
         };
       }
       if (isModelUnavailable(a.status, a.message)) break; // next model id
       const transient = a.status === 429 || a.status >= 500 || a.status === 0;
       if (!transient) {
+        // A provider that rejects the location (e.g. an unsupported country)
+        // is asked again without it, rather than losing the search.
+        if (country) {
+          const retry = await callModel(provider, key, prompt, maxTokens, { ...opts, country: null });
+          return { ...retry, searchError: retry.searchError || "location ignored: " + lastError };
+        }
         // Auth or bad request: another model id will not help. A rejected
         // search request still gets a plain answer, flagged as unsearched.
         if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError);
@@ -537,6 +612,41 @@ async function searchFallback(
 ): Promise<ModelResult> {
   const plain = await callModel(provider, key, prompt, maxTokens);
   return { ...plain, searched: false, searchError: searchError || "search unavailable" };
+}
+
+/**
+ * Providers used for analysis (suggestions, Radar, titles, source types,
+ * listening questions), in order of preference. Measurement never uses this:
+ * each engine must be asked through its own provider.
+ */
+export const ANALYST_ORDER: ProviderId[] = ["anthropic", "openai", "gemini"];
+
+/**
+ * Runs an analysis prompt on the first provider in ANALYST_ORDER that has a
+ * key and answers, so one account being out of credit or over its spend limit
+ * doesn't stop the tool. `fellBackFrom` lists the providers that failed first.
+ */
+export async function callAnalyst(
+  prompt: string,
+  maxTokens = 4000,
+): Promise<ModelResult & { provider?: ProviderId; fellBackFrom?: string }> {
+  const errors: string[] = [];
+  for (const provider of ANALYST_ORDER) {
+    const key = envKey(provider);
+    if (!key) continue;
+    const out = await callModel(provider, key, prompt, maxTokens);
+    if (!out.error && out.text.trim()) {
+      return { ...out, provider, fellBackFrom: errors.length ? errors.join(" | ") : undefined };
+    }
+    errors.push(`${provider}: ${out.error || "empty reply"}`);
+  }
+  return {
+    text: "",
+    citations: [],
+    model: "",
+    searched: false,
+    error: errors.length ? errors.join(" | ") : "No AI provider key is set in the edge-function secrets",
+  };
 }
 
 /** Pull the first JSON object out of a model reply, tolerating code fences. */

@@ -5,7 +5,7 @@ import { useAppState } from "@/state/AppState";
 import { playbookFor } from "@/lib/playbooks";
 import { callFn } from "@/lib/callFn";
 import { AdviseTailorSchema } from "@/lib/schemas";
-import { ctxString } from "@/lib/context";
+import { buildAdviseBrief } from "@/lib/adviseBrief";
 import type { Opportunity } from "@/lib/types";
 
 const STATUS_OPTS = ["Not started", "In progress", "Done", "Parked"];
@@ -49,13 +49,7 @@ export default function BacklogView() {
       const j = await callFn(
         "geo-advise",
         {
-          brand: brand!.name,
-          website: brand!.website,
-          context: ctxString(data.context),
-          objective: brand!.objective,
-          positioning: brand!.positioning,
-          audience: brand!.audience,
-          themes: brand!.themes,
+          brief: buildAdviseBrief(brand!, data),
           opportunity: o.title,
           gap: o.linked_gap,
           playbook: pb.title,
@@ -63,11 +57,16 @@ export default function BacklogView() {
         },
         AdviseTailorSchema,
       );
-      const text = j.guidance || j.error || "No guidance returned.";
+      const aiOk = j.source === "ai" && !!j.guidance;
+      // A template fallback is shown with the reason but not saved, so it never
+      // passes for real tailored advice.
+      const text = aiOk
+        ? j.guidance!
+        : (j.error ? "⚠ " + j.error + "\n\n" : "") + (j.guidance || "No guidance returned.");
       setOpps((prev) =>
         prev.map((x) => (x.id === id ? { ...x, ai_guidance: text } : x)),
       );
-      if (j.guidance) {
+      if (aiOk) {
         await sb.from("geo_opportunities").update({ ai_guidance: text }).eq("id", id);
       }
     } catch (e) {

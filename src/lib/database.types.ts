@@ -803,8 +803,10 @@ export type Database = {
           audience: string | null
           created_at: string
           engine_weights: Json
+          fact_sheet: Json
           id: string
           is_client: boolean
+          market_country: string | null
           metric_weights: Json
           name: string
           objective: string | null
@@ -826,8 +828,10 @@ export type Database = {
           audience?: string | null
           created_at?: string
           engine_weights?: Json
+          fact_sheet?: Json
           id?: string
           is_client?: boolean
+          market_country?: string | null
           metric_weights?: Json
           name: string
           objective?: string | null
@@ -849,8 +853,10 @@ export type Database = {
           audience?: string | null
           created_at?: string
           engine_weights?: Json
+          fact_sheet?: Json
           id?: string
           is_client?: boolean
+          market_country?: string | null
           metric_weights?: Json
           name?: string
           objective?: string | null
@@ -1191,6 +1197,27 @@ export type Database = {
           },
         ]
       }
+      geo_outlet_tiers: {
+        Row: {
+          brand_id: string
+          domain: string
+          tier: string
+          updated_at: string
+        }
+        Insert: {
+          brand_id: string
+          domain: string
+          tier: string
+          updated_at?: string
+        }
+        Update: {
+          brand_id?: string
+          domain?: string
+          tier?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       geo_pr_activity: {
         Row: {
           activity_date: string
@@ -1198,6 +1225,7 @@ export type Database = {
           brand_id: string
           cited: boolean
           created_at: string
+          headline: string | null
           id: string
           notes: string | null
           outlet: string
@@ -1211,6 +1239,7 @@ export type Database = {
           brand_id: string
           cited?: boolean
           created_at?: string
+          headline?: string | null
           id?: string
           notes?: string | null
           outlet: string
@@ -1224,6 +1253,7 @@ export type Database = {
           brand_id?: string
           cited?: boolean
           created_at?: string
+          headline?: string | null
           id?: string
           notes?: string | null
           outlet?: string
@@ -1360,6 +1390,7 @@ export type Database = {
           competitor_mentions: number
           confidence: string | null
           engine: string
+          entities: Json | null
           evidence: string | null
           id: string
           mention_rate: number | null
@@ -1384,6 +1415,7 @@ export type Database = {
           competitor_mentions?: number
           confidence?: string | null
           engine: string
+          entities?: Json | null
           evidence?: string | null
           id?: string
           mention_rate?: number | null
@@ -1408,6 +1440,7 @@ export type Database = {
           competitor_mentions?: number
           confidence?: string | null
           engine?: string
+          entities?: Json | null
           evidence?: string | null
           id?: string
           mention_rate?: number | null
@@ -1523,6 +1556,95 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "geo_runs_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "geo_brands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      geo_target_titles: {
+        Row: {
+          angle: string | null
+          basis: string | null
+          batch_id: string | null
+          brand_id: string
+          citations: number
+          domain: string | null
+          engines: string[]
+          example_urls: string[]
+          gap_citations: number
+          id: string
+          key: string
+          kind: string | null
+          known: boolean | null
+          name: string
+          needs: string | null
+          priority: number | null
+          questions: number
+          reason: string | null
+          route: string | null
+          story: string | null
+          team_decision: string | null
+          team_note: string | null
+          updated_at: string
+          verdict: string | null
+        }
+        Insert: {
+          angle?: string | null
+          basis?: string | null
+          batch_id?: string | null
+          brand_id: string
+          citations?: number
+          domain?: string | null
+          engines?: string[]
+          example_urls?: string[]
+          gap_citations?: number
+          id?: string
+          key: string
+          kind?: string | null
+          known?: boolean | null
+          name: string
+          needs?: string | null
+          priority?: number | null
+          questions?: number
+          reason?: string | null
+          route?: string | null
+          story?: string | null
+          team_decision?: string | null
+          team_note?: string | null
+          updated_at?: string
+          verdict?: string | null
+        }
+        Update: {
+          angle?: string | null
+          basis?: string | null
+          batch_id?: string | null
+          brand_id?: string
+          citations?: number
+          domain?: string | null
+          engines?: string[]
+          example_urls?: string[]
+          gap_citations?: number
+          id?: string
+          key?: string
+          kind?: string | null
+          known?: boolean | null
+          name?: string
+          needs?: string | null
+          priority?: number | null
+          questions?: number
+          reason?: string | null
+          route?: string | null
+          story?: string | null
+          team_decision?: string | null
+          team_note?: string | null
+          updated_at?: string
+          verdict?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_target_titles_brand_id_fkey"
             columns: ["brand_id"]
             isOneToOne: false
             referencedRelation: "geo_brands"
@@ -2429,11 +2551,25 @@ export type Database = {
     }
     Functions: {
       geo_delete_brand: { Args: { bid: string }; Returns: undefined }
+      geo_cancel_run: { Args: { rid: string }; Returns: number }
       geo_enqueue_run: {
         Args: { p_only_new?: boolean; p_samples?: number; rid: string }
         Returns: number
       }
       geo_start_snapshot: { Args: { bid: string; p_samples?: number }; Returns: string }
+      geo_v2_answers: {
+        Args: { bid: string }
+        Returns: {
+          run_id: string
+          run_date: string
+          run_created: string
+          prompt_id: string
+          engine: string
+          mentioned: boolean
+          cited_sources: string | null
+          urls: string[]
+        }[]
+      }
       log_admin_time: {
         Args: { p_action_key: string; p_client_id: string }
         Returns: undefined

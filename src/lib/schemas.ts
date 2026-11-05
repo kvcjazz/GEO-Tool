@@ -20,6 +20,7 @@ export const NewsResponseSchema = z.object({
   articles: z.array(NewsArticleSchema).nullish(),
   competitorNews: z.array(NewsArticleSchema).nullish(),
   query: z.string().nullish(),
+  error: z.string().nullish(),
 });
 export type NewsResponse = z.infer<typeof NewsResponseSchema>;
 
@@ -40,6 +41,8 @@ export const RadarResponseSchema = z.object({
   news: z.array(NewsArticleSchema).nullish(),
   competitorNews: z.array(NewsArticleSchema).nullish(),
   source: z.string().nullish(),
+  note: z.string().nullish(),
+  newsError: z.string().nullish(),
 });
 export type RadarResponse = z.infer<typeof RadarResponseSchema>;
 
@@ -58,13 +61,19 @@ export type ListenResponse = z.infer<typeof ListenResponseSchema>;
 export const SuggestPromptSchema = z.object({
   text: z.string(),
   ptype: z.string().nullish(),
+  stage: z.string().nullish(),
+  persona: z.string().nullish(),
+  names_client: z.boolean().nullish(),
   impact: z.union([z.number(), z.string()]).nullish(),
   reason: z.string().nullish(),
+  lever: z.string().nullish(),
 });
 
 export const AdviseSuggestSchema = z.object({
   prompts: z.array(SuggestPromptSchema).nullish(),
+  note: z.string().nullish(),
   source: z.string().nullish(),
+  model: z.string().nullish(),
   error: z.string().nullish(),
 });
 export type AdviseSuggestResponse = z.infer<typeof AdviseSuggestSchema>;
@@ -103,4 +112,80 @@ export const ClassifySourcesSchema = z.object({
     .nullish(),
   error: z.string().nullish(),
   detail: z.string().nullish(),
+});
+
+// geo-measure, direct mode (nothing saved) — used by the Titles to target probe.
+export const MeasureDirectSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().nullish(),
+  detail: z.string().nullish(),
+  result: z
+    .object({
+      mentioned: z.boolean().nullish(),
+      competitor_mentions: z.number().nullish(),
+      web_search: z.boolean().nullish(),
+      runs: z
+        .array(z.object({ citations: z.array(z.string()).nullish(), searched: z.boolean().nullish() }))
+        .nullish(),
+    })
+    .nullish(),
+});
+
+// geo-targets (senior-PR review of the titles to target)
+export const TargetVerdictSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  kind: z.string().nullish(),
+  verdict: z.string(),
+  priority: z.number().nullish(),
+  route: z.string().nullish(),
+  angle: z.string().nullish(),
+  reason: z.string().nullish(),
+  needs: z.string().nullish(),
+  known: z.boolean().nullish(),
+});
+
+export const TargetsResponseSchema = z.object({
+  ok: z.boolean(),
+  model: z.string().nullish(),
+  titles: z.array(TargetVerdictSchema).nullish(),
+  missing: z.array(z.string()).nullish(),
+  error: z.string().nullish(),
+  detail: z.string().nullish(),
+});
+export type TargetVerdict = z.infer<typeof TargetVerdictSchema>;
+
+// geo-entities (brand extraction backfill)
+export const EntitiesResponseSchema = z.object({
+  ok: z.boolean(),
+  processed: z.number().nullish(),
+  remaining: z.number().nullish(),
+  errors: z.array(z.string()).nullish(),
+  error: z.string().nullish(),
+});
+
+// geo-coverage-meta (publication, headline and date read from article pages)
+export const CoverageMetaSchema = z.object({
+  ok: z.boolean(),
+  items: z
+    .array(
+      z.object({
+        url: z.string(),
+        outlet: z.string().nullish(),
+        headline: z.string().nullish(),
+        date: z.string().nullish(),
+        outlet_from: z.string().nullish(),
+      }),
+    )
+    .nullish(),
+  error: z.string().nullish(),
+});
+
+export const CoverageRepairSchema = z.object({
+  ok: z.boolean(),
+  checked: z.number().nullish(),
+  fixed: z
+    .object({ outlet: z.number(), headline: z.number(), date: z.number(), rows: z.number() })
+    .nullish(),
+  error: z.string().nullish(),
 });

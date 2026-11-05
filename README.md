@@ -70,9 +70,17 @@ Next.js app never needs them, it only calls the functions.
 
 - Supabase project `ymnulfluxjgqacodzfxq`.
 - Tables are `geo_*`-prefixed with RLS (`FOR ALL TO authenticated`).
-- Edge functions: `geo-run`, `geo-run-batch`, `geo-radar`, `geo-news`,
-  `geo-listen`, `geo-engines`, `geo-advise`.
-- Two `pg_cron` jobs run monthly snapshots + listening scans server-side.
+- Edge functions with source in `supabase/functions/`: `geo-measure`,
+  `geo-advise`, `geo-radar`, `geo-news`, `geo-listen`, `geo-targets`,
+  `geo-classify-sources` (shared code in `_shared/`). Only `geo-engines`,
+  `geo-users` and the unused v1 `geo-run` still live only in Supabase.
+- Retired (deployed as a 410 stub from `retired/`): `geo-run-batch`,
+  `geo-publish`, `geo-pilot`, `geo-diag`.
+- `pg_cron`: monthly snapshot (06:00 on the 1st), monthly listening (07:00,
+  authenticated with the `geo_cron_secret` Vault secret), measurement queue
+  dispatcher (every minute).
+- News comes from Google News RSS (`_shared/news.ts`); GDELT is unreachable
+  from Supabase.
 
 ### Measurement v2 (`geo-measure`)
 
@@ -92,6 +100,26 @@ v1 (`geo-run`) remains the live method until the switch-over: point
 cd supabase/functions
 deno test _shared/measure_test.ts   # deterministic checks
 deno check geo-measure/index.ts
+```
+
+### Titles to target (`geo-targets`)
+
+**Plan → Titles to target** recommends where to earn coverage. Candidates come
+only from citations — the sites the engines cited in the client's web-searched
+answers over the last 3 checks (`src/lib/targets.ts` ranks them: buyer
+questions, engine weights and competitor-gap answers count for more), or, for a
+client with no measured answers yet, a first-look probe that asks its buyer
+questions through `geo-measure` in direct mode (nothing is saved as a
+measurement). `geo-targets` then has Claude judge each one as a senior PR
+consultant would — realistic / stretch / not realistic, route in, angle from the
+story (the PR profile by default, or a story the team types in), and why.
+Results and the team's calls (relationship / no-go) live in `geo_target_titles`;
+the calls are fed into the next review, and realistic titles are passed to the
+Radar as targets.
+
+```bash
+cd supabase/functions
+deno check geo-targets/index.ts
 ```
 
 The retired hosting hack (`geo_app` table + `geo-pilot`/`geo-publish`/`geo-diag`

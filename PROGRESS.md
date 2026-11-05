@@ -92,3 +92,84 @@ reused untouched.
   Overview headline "Found by new buyers" vs "Recognised by name", Answers
   grouped by question with "Review / override" for edits, Sources "Add to
   plan", accepted ideas go straight into the one action plan.
+
+## 2026-10-29 — Titles to target
+
+- New **Plan → Titles to target** tab (`src/views/TargetsView.tsx`): which
+  cited sites to target, judged by a senior-PR review (`geo-targets`, deployed)
+  against the client's story. Team can add titles (to the media list), mark a
+  relationship or a no-go; realistic titles feed the Radar.
+- `geo_target_titles` table + RLS (per-client, same as other `geo_` tables) —
+  applied to the live project.
+- Settings: brand saves now say "Not saved" when the database refuses the
+  update (no edit access) instead of reporting success.
+- Not yet verified end-to-end in a signed-in browser (the build container can't
+  reach the Supabase URL).
+
+## 2026-11-05 — Fix "delete client"
+
+- Deleting a client failed with an FK violation on `geo_media_targets`
+  (also latent on `geo_radar_items`, `geo_news`). Those FKs now cascade and
+  `geo_delete_brand` clears every brand-linked table. Applied live via
+  migration `geo_delete_brand_fix_fk_cascade`; SQL kept in
+  `supabase/migrations/20261105120000_geo_delete_brand_fix_fk_cascade.sql`.
+
+## 2026-11-05 — Expert question suggestions (geo-advise v10)
+
+- `geo-advise` source now lives in `supabase/functions/geo-advise/` and is
+  deployed with JWT verification + a signed-in check (it was open before).
+- The app sends one brief (`src/lib/adviseBrief.ts`): strategy, PR profile
+  incl. market/region and buyer persona, competitors (+ mentions in the latest
+  check), client notes with team-steered items first (12k chars), every
+  tracked question with its latest result, the latest check's reach split,
+  per-engine mention rate, gap sources (non-competitor sites cited when the
+  client is absent) and recent PR activity.
+- "Suggest questions" prompt follows GEO practice: conversational buyer
+  questions in the client's market, ≥2/3 unbranded, no priming with the
+  client's positioning, coverage of buying stages and personas, prioritised by
+  the latest gaps, de-duplicated against tracked questions. Each suggestion
+  shows persona, stage, impact, reason and the PR lever.
+- No silent template fallback for suggestions any more: failures show the
+  reason. Backlog "tailor" uses the same brief; a template fallback is shown
+  with its reason and is not saved.
+
+## 2026-11-05 — Honest engines, PR impact, fact sheet, Radar evidence, clean-up
+
+- **Engines:** "Copilot" (the OpenAI model asked twice) is no longer measured
+  or scored; its weight moved to ChatGPT. Engines without a key (Grok) are left
+  out of the score. Migration `20261105130000_drop_copilot_engine`.
+- **PR impact:** Coverage & impact shows per placement whether the exact
+  article is cited in AI answers, outlet citations before → after, and
+  visibility on topic-related questions before → after (like-for-like v2
+  checks). `geo_v2_answers()` returns citation URLs without answer text.
+  New **Monthly report** area, printable to PDF.
+- **Fact sheet + market:** `geo_brands.fact_sheet` (ground truth) and
+  `market_country` (ISO). Fact sheet feeds every AI step and geo-measure's
+  accuracy grading (error noted on the answer); market is passed as the web
+  search location to Claude, OpenAI and Perplexity.
+- **Radar / news / listening:** geo-radar gets the measurement brief and must
+  cite evidence; news moved from GDELT (TLS never completes from Supabase) to
+  Google News RSS; geo-listen asks unprimed, searched questions and requires a
+  user or the cron secret.
+- **Titles to target** (PR #4 branch) merged into this branch.
+- **Security:** geo-run-batch, geo-publish, geo-pilot, geo-diag replaced by a
+  410 stub; geo-advise and geo-listen no longer open.
+
+## 2026-11-05 — Share of voice v2, stop/resume, AI fallback, client switching
+
+- **Share of voice v2:** `geo_responses.entities` lists every brand each
+  answer names (order, recommended, client found in code) — filled by
+  geo-measure for new answers and by `geo-entities` for older ones. Headline
+  SOV = client's points ÷ all brands' points on questions that don't name the
+  client (recommended = 2, mention = 1, averaged over samples); branded SOV
+  shown separately; old formula used only for answers without brand data.
+  Client setup → Competitors lists every brand named with one-click Track.
+  Scores re-baseline when this lands (SOV is 25% of the GEO score).
+- **Stop / resume:** `geo_cancel_run(rid)` cancels queued and running jobs
+  (`cancelled` status; geo-measure doesn't save a cancelled job). Header has
+  Stop while measuring and Measure now / Resume with the missing count.
+- **New questions:** adding questions offers to measure them immediately.
+- **AI fallback:** analysis calls go through `callAnalyst` (Claude → OpenAI →
+  Gemini); Claude calls get ≥16k tokens so thinking can't empty the reply.
+- **Client switching:** All clients home, sidebar client block, ⌘K switcher,
+  `?client=` in the URL, last client remembered.

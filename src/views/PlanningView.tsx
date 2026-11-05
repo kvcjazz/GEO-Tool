@@ -5,40 +5,16 @@ import { useAppState } from "@/state/AppState";
 import { newsDate, stars } from "@/lib/format";
 import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
+import { buildAdviseBrief } from "@/lib/adviseBrief";
 import { NewsResponseSchema, RadarResponseSchema } from "@/lib/schemas";
-import type { MemoryOutlet, NewsItem, RadarItem } from "@/lib/types";
+import { memoryText } from "@/lib/memory";
+import { latestTargets } from "@/lib/targets";
+import type { NewsItem, RadarItem } from "@/lib/types";
 
 function feasTag(f?: string | null) {
   const s = (f || "").toLowerCase();
   const c = s.indexOf("high") >= 0 ? "t-yes" : s.indexOf("low") >= 0 ? "t-no" : "t-na";
   return <span className={`tag ${c}`}>{f || "—"}</span>;
-}
-
-function memoryText(memory: MemoryOutlet[] | null): string {
-  const a = memory || [];
-  if (!a.length) return "";
-  const proven = a
-    .filter((o) => o.score > 0)
-    .slice(0, 10)
-    .map(
-      (o) =>
-        o.outlet +
-        (o.landed
-          ? " (landed" + (o.cited ? "+cited by AI" : "") + ")"
-          : o.up
-            ? " (rated realistic)"
-            : ""),
-    )
-    .join("; ");
-  const avoid = a
-    .filter((o) => o.score < 0)
-    .slice(0, 8)
-    .map((o) => o.outlet + " (rated unrealistic/dismissed)")
-    .join("; ");
-  let t = "";
-  if (proven) t += "PROVEN / likely to work: " + proven + ". ";
-  if (avoid) t += "AVOID / has not worked: " + avoid + ".";
-  return t;
 }
 
 export default function PlanningView() {
@@ -96,6 +72,7 @@ export default function PlanningView() {
           themes: brand!.themes,
           sector: brand!.sector,
           pr_region: brand!.pr_region,
+          market_country: brand!.market_country,
           competitors: data.competitors.map((c) => c.name),
         },
         NewsResponseSchema,
@@ -109,7 +86,9 @@ export default function PlanningView() {
               (j.competitorNews && j.competitorNews.length
                 ? " · " + j.competitorNews.length + " competitor"
                 : "")
-          : "No fresh stories found for these themes",
+          : j.error
+            ? "News source unavailable: " + j.error
+            : "No fresh stories found for these themes",
       );
       await reload();
     } catch (e) {
@@ -136,6 +115,8 @@ export default function PlanningView() {
         .map((r) => r.title)
         .filter(Boolean);
       const payload = {
+        brief: buildAdviseBrief(brand!, data),
+        market_country: brand!.market_country,
         brand: brand!.name,
         sector: brand!.sector,
         pr_region: brand!.pr_region,
@@ -151,11 +132,29 @@ export default function PlanningView() {
         pr_newsworthy: brand!.pr_newsworthy,
         website: brand!.website,
         context: ctxString(data.context),
-        mediaTargets: data.media.map((m) => ({
-          outlet: m.outlet,
-          tier: m.tier,
-          vip: m.vip,
-        })),
+        mediaTargets: [
+          ...data.media.map((m) => ({
+            outlet: m.outlet,
+            tier: m.tier,
+            vip: m.vip,
+          })),
+          // Titles the engines cite that the senior-PR review judged realistic.
+          ...latestTargets(data.targets)
+            .rows.filter(
+              (t) =>
+                t.verdict === "realistic" &&
+                t.team_decision !== "no_go" &&
+                !data.media.some(
+                  (m) => (m.outlet || "").trim().toLowerCase() === t.name.trim().toLowerCase(),
+                ),
+            )
+            .slice(0, 10)
+            .map((t) => ({
+              outlet: t.name,
+              tier: "cited by AI engines, judged realistic" + (t.route ? ": " + t.route : ""),
+              vip: false,
+            })),
+        ],
         competitors: data.competitors.map((c) => c.name),
         opportunities: data.opps.map((o) => ({
           title: o.title,
@@ -213,7 +212,9 @@ export default function PlanningView() {
             : rows.length +
                 " new ideas added" +
                 (dups > 0 ? " · " + dups + " duplicates skipped" : "") +
-                (j.source === "template" ? " · template" : ""),
+                (j.source === "template"
+                  ? " · generic template (AI unavailable: " + (j.note || "unknown error") + ")"
+                  : ""),
         );
       }
       await reload();
