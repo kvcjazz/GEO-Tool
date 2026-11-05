@@ -255,6 +255,26 @@ const SEARCH_TIMEOUT_MS = 90_000;
 /** Status used for an abandoned (timed-out) search call; not retried. */
 const TIMED_OUT = 408;
 
+/**
+ * Current Claude models think before answering by default, and thinking counts
+ * against max_tokens. A small cap (the old 800–1500) could be spent entirely on
+ * thinking, leaving an empty reply. Claude calls get at least this much room;
+ * only tokens actually generated are billed.
+ */
+const ANTHROPIC_MIN_TOKENS = 16000;
+
+/** A Claude reply with no text: say why instead of passing on an empty answer. */
+function emptyClaude(stopReason: string | undefined): Attempt {
+  return fail(
+    422,
+    stopReason === "max_tokens"
+      ? "the reply was cut off before any text (token limit reached while thinking)"
+      : stopReason === "refusal"
+      ? "the model declined to answer"
+      : `empty reply (stop_reason: ${stopReason || "unknown"})`,
+  );
+}
+
 const fail = (status: number, message: string): Attempt => ({
   ok: false,
   status,
@@ -293,6 +313,7 @@ async function anthropicSearch(
     { role: "user", content: prompt },
   ];
   const blocks: AnthropicBlock[] = [];
+  let lastStop: string | undefined;
   for (let turn = 0; turn < 3; turn++) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -301,7 +322,12 @@ async function anthropicSearch(
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ model, max_tokens: maxTokens, messages, tools: [tool] }),
+      body: JSON.stringify({
+        model,
+        max_tokens: Math.max(maxTokens, ANTHROPIC_MIN_TOKENS),
+        messages,
+        tools: [tool],
+      }),
       signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     });
     const j = (await readJson(r)) as {
@@ -310,6 +336,7 @@ async function anthropicSearch(
     };
     if (!r.ok) return fail(r.status, errText(r.status, j));
     blocks.push(...(j.content || []));
+    lastStop = j.stop_reason;
     if (j.stop_reason !== "pause_turn") break;
     messages.push({ role: "assistant", content: j.content || [] });
   }
@@ -317,6 +344,7 @@ async function anthropicSearch(
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
     .join("");
+  if (!text.trim()) return emptyClaude(lastStop);
   // Only the sources Claude cites in its answer — not every page it read.
   const citations = blocks
     .flatMap((b) => (b.type === "text" ? (b.citations || []).map((c) => c.url || "") : []))
@@ -405,18 +433,20 @@ async function attempt(
       },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens,
+        max_tokens: Math.max(maxTokens, ANTHROPIC_MIN_TOKENS),
         messages: [{ role: "user", content: prompt }],
       }),
     });
     const j = (await readJson(r)) as {
       content?: { type?: string; text?: string }[];
+      stop_reason?: string;
     };
     if (!r.ok) return fail(r.status, errText(r.status, j));
     const text = (j.content || [])
       .filter((c) => !c.type || c.type === "text")
       .map((c) => c.text || "")
       .join("");
+    if (!text.trim()) return emptyClaude(j.stop_reason);
     return { ok: true, status: r.status, text, citations: [], message: "" };
   }
 
