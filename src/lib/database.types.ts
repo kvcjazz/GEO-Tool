@@ -1197,6 +1197,27 @@ export type Database = {
           },
         ]
       }
+      geo_outlet_tiers: {
+        Row: {
+          brand_id: string
+          domain: string
+          tier: string
+          updated_at: string
+        }
+        Insert: {
+          brand_id: string
+          domain: string
+          tier: string
+          updated_at?: string
+        }
+        Update: {
+          brand_id?: string
+          domain?: string
+          tier?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       geo_pr_activity: {
         Row: {
           activity_date: string
@@ -1204,6 +1225,7 @@ export type Database = {
           brand_id: string
           cited: boolean
           created_at: string
+          headline: string | null
           id: string
           notes: string | null
           outlet: string
@@ -1217,6 +1239,7 @@ export type Database = {
           brand_id: string
           cited?: boolean
           created_at?: string
+          headline?: string | null
           id?: string
           notes?: string | null
           outlet: string
@@ -1230,6 +1253,7 @@ export type Database = {
           brand_id?: string
           cited?: boolean
           created_at?: string
+          headline?: string | null
           id?: string
           notes?: string | null
           outlet?: string

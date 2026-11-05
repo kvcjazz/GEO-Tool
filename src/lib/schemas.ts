@@ -163,3 +163,20 @@ export const EntitiesResponseSchema = z.object({
   errors: z.array(z.string()).nullish(),
   error: z.string().nullish(),
 });
+
+// geo-coverage-meta (publication, headline and date read from article pages)
+export const CoverageMetaSchema = z.object({
+  ok: z.boolean(),
+  items: z
+    .array(
+      z.object({
+        url: z.string(),
+        outlet: z.string().nullish(),
+        headline: z.string().nullish(),
+        date: z.string().nullish(),
+        outlet_from: z.string().nullish(),
+      }),
+    )
+    .nullish(),
+  error: z.string().nullish(),
+});

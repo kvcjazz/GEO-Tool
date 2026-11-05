@@ -11,6 +11,8 @@ export type ImportRow = {
   url: string;
   activity_date: string;
   outlet: string;
+  /** The article's headline (spreadsheet "Title"/"Headline" column, or the page). */
+  headline: string | null;
   theme: string | null;
   tier: string;
   atype: string;
@@ -24,8 +26,10 @@ export type ImportRow = {
 const HEADERS: Record<string, string[]> = {
   url: ["url", "link", "article", "article url", "article link", "coverage", "coverage link", "coverage url", "web link", "source url"],
   date: ["date", "published", "date published", "publish date", "publication date", "coverage date", "live date"],
-  outlet: ["outlet", "publication", "media", "media outlet", "title", "site", "source", "publisher"],
-  theme: ["theme", "topic", "subject", "headline", "story", "angle", "campaign"],
+  // "Title" is the article's title in coverage sheets, never the publication.
+  outlet: ["outlet", "publication", "publication name", "media", "media outlet", "media title", "site", "source", "publisher", "outlet name"],
+  headline: ["title", "headline", "article title", "article headline", "story title", "story", "article name"],
+  theme: ["theme", "topic", "subject", "angle", "campaign", "key message", "message"],
   tier: ["tier", "outlet tier", "media tier"],
   type: ["type", "coverage type", "category", "format"],
 };
@@ -101,26 +105,10 @@ function parseType(raw: string): string {
   return TYPES[0];
 }
 
-/** "techround.co.uk" → "Techround"; good enough until the team edits it. */
-function outletFromDomain(d: string): string {
+/** "techround.co.uk" → "Techround": last resort when the page can't be read. */
+export function outletFromDomain(d: string): string {
   const base = d.split(".")[0] || d;
   return base.charAt(0).toUpperCase() + base.slice(1);
-}
-
-/** Readable words from an article's address, as a fallback theme. */
-function themeFromSlug(url: string): string | null {
-  try {
-    const parts = new URL(url).pathname.split("/").filter(Boolean);
-    const slug = [...parts].reverse().find((p) => /[a-z].*-.*[a-z]/i.test(p));
-    if (!slug) return null;
-    const words = decodeURIComponent(slug)
-      .replace(/\.(html?|php|aspx?)$/i, "")
-      .split(/[-_]+/)
-      .filter((w) => w && !/^\d+$/.test(w));
-    return words.length >= 2 ? words.join(" ").slice(0, 80) : null;
-  } catch {
-    return null;
-  }
 }
 
 export function buildImport(
@@ -135,7 +123,7 @@ export function buildImport(
   let headerless = false;
   if (!headerFound && /^https?:\/\//i.test((rows[0][0] || "").trim())) {
     // No header: a plain list of links.
-    cols = { url: 0, date: -1, outlet: -1, theme: -1, tier: -1, type: -1 };
+    cols = { url: 0, date: -1, outlet: -1, headline: -1, theme: -1, tier: -1, type: -1 };
     body = rows;
     headerFound = true;
     headerless = true;
@@ -160,26 +148,16 @@ export function buildImport(
     if (!valid) errors.push(url ? "Not a valid link" : "No link");
     else if (!isArticleUrl(url)) notes.push("Home-page link: AI citations can only be matched to the outlet");
 
+    // Missing outlet or date: left empty here and read from the article's page
+    // (fillFromPages); only an unreadable value in the sheet is an error.
     const rawDate = get(r, cols.date);
-    let date = parseDate(rawDate);
-    if (!date) {
-      if (rawDate) errors.push(`Unreadable date “${rawDate}”`);
-      else {
-        date = today;
-        notes.push("No date: used today");
-      }
-    } else if (date > today) notes.push("Date is in the future");
+    const date = parseDate(rawDate);
+    if (!date && rawDate) errors.push(`Unreadable date “${rawDate}”`);
+    else if (date && date > today) notes.push("Date is in the future");
 
-    let outlet = get(r, cols.outlet);
-    if (!outlet && valid) {
-      outlet = outletFromDomain(host(url));
-      notes.push("Outlet taken from the link");
-    }
-    let theme: string | null = get(r, cols.theme) || null;
-    if (!theme && valid) {
-      theme = themeFromSlug(url);
-      if (theme) notes.push("Theme taken from the link");
-    }
+    const outlet = get(r, cols.outlet);
+    const headline = get(r, cols.headline) || null;
+    const theme: string | null = get(r, cols.theme) || null;
 
     const key = valid ? normUrl(url) : "";
     const duplicate = !!key && (have.has(key) || seen.has(key));
@@ -191,8 +169,9 @@ export function buildImport(
       url,
       activity_date: date || "",
       outlet,
+      headline,
       theme,
-      tier: parseTier(get(r, cols.tier)),
+      tier: get(r, cols.tier) ? parseTier(get(r, cols.tier)) : "",
       atype: parseType(get(r, cols.type)),
       errors,
       notes,
@@ -202,4 +181,57 @@ export function buildImport(
   return { rows: out, headerFound };
 }
 
-export const TEMPLATE_HEADER = ["url", "date", "outlet", "theme", "tier", "type"];
+export const TEMPLATE_HEADER = ["url", "date", "outlet", "headline", "theme", "tier", "type"];
+
+export type PageMeta = {
+  url: string;
+  outlet: string | null;
+  headline: string | null;
+  date: string | null;
+  outlet_from?: string;
+};
+
+/**
+ * Completes rows from what each article's page says (geo-coverage-meta): the
+ * publication when the sheet has none, the publish date when the sheet has
+ * none, the headline when missing — and the client's own tier for the outlet
+ * when one is set, else the sheet's tier, else Tier 2.
+ */
+export function fillFromPages(
+  rows: ImportRow[],
+  pages: Map<string, PageMeta>,
+  tiers: Map<string, string>,
+  today: string,
+): ImportRow[] {
+  return rows.map((r) => {
+    if (r.errors.length) return r;
+    const notes = [...r.notes];
+    const p = pages.get(r.url);
+    let outlet = r.outlet;
+    if (!outlet) {
+      outlet = p?.outlet || outletFromDomain(host(r.url));
+      notes.push(p?.outlet ? "Publication read from the article" : "Publication guessed from the link");
+    }
+    let date = r.activity_date;
+    if (!date) {
+      if (p?.date) {
+        date = p.date;
+        notes.push("Date read from the article");
+      } else {
+        date = today;
+        notes.push("No date found: used today — please check");
+      }
+    }
+    const remembered = tiers.get(host(r.url));
+    const tier = remembered || r.tier || "Tier 2";
+    if (remembered && r.tier && remembered !== r.tier) notes.push(`${remembered} for this client (sheet said ${r.tier})`);
+    return {
+      ...r,
+      outlet,
+      activity_date: date,
+      headline: r.headline || p?.headline || null,
+      tier,
+      notes,
+    };
+  });
+}

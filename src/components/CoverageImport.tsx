@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { parseCsv, toCsv } from "@/lib/csv";
-import { buildImport, TEMPLATE_HEADER, type ImportRow } from "@/lib/coverageImport";
+import { buildImport, fillFromPages, TEMPLATE_HEADER, type ImportRow } from "@/lib/coverageImport";
+import { readPages } from "@/lib/coverageMeta";
 import { placementImpact, type V2Answer } from "@/lib/prImpact";
 import { applyCitationLinks, citationLinks } from "@/lib/prLinks";
 import { todayISO } from "@/lib/format";
@@ -21,18 +22,27 @@ type Summary = {
   homepage: number;
 };
 
-export default function CoverageImport({ answers }: { answers: V2Answer[] | null }) {
+export default function CoverageImport({
+  answers,
+  tiers,
+}: {
+  answers: V2Answer[] | null;
+  /** This client's own tier per site (domain → "Tier 1" …). */
+  tiers: Map<string, string>;
+}) {
   const { brand, data, sb, toast, reload } = useAppState();
   const [rows, setRows] = useState<ImportRow[] | null>(null);
   const [fileName, setFileName] = useState("");
   const [paste, setPaste] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState<{ done: number; total: number } | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [showAll, setShowAll] = useState(false);
   if (!brand) return null;
 
-  function load(text: string, name: string) {
-    const { rows: parsed, headerFound } = buildImport(parseCsv(text), data.pr, todayISO());
+  async function load(text: string, name: string) {
+    const today = todayISO();
+    const { rows: parsed, headerFound } = buildImport(parseCsv(text), data.pr, today);
     if (!headerFound) {
       setRows(null);
       return toast(
@@ -43,6 +53,18 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
     setFileName(name);
     setRows(parsed);
     setSummary(null);
+    // Read each article's page for the publication, headline and date.
+    const todo = parsed.filter((r) => !r.errors.length && !r.duplicate);
+    const headlines: Record<string, string> = {};
+    for (const r of todo) if (r.headline) headlines[r.url] = r.headline;
+    setReading({ done: 0, total: todo.length });
+    const pages = await readPages(
+      todo.map((r) => r.url),
+      headlines,
+      (done, total) => setReading({ done, total }),
+    );
+    setReading(null);
+    setRows(fillFromPages(parsed, pages, tiers, today));
   }
 
   async function onFile(f: File | undefined) {
@@ -56,7 +78,15 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
   function downloadTemplate() {
     const csv = toCsv([
       TEMPLATE_HEADER,
-      ["https://www.example.com/news/client-story", "2026-10-26", "Example News", "AI in insurance", "Tier 1", "Earned coverage"],
+      [
+        "https://www.example.com/news/client-story",
+        "26/10/2026",
+        "Example News",
+        "Client launches new AI claims tool",
+        "AI in insurance",
+        "Tier 1",
+        "Earned coverage",
+      ],
     ]);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -80,6 +110,7 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
           activity_date: r.activity_date,
           outlet: r.outlet,
           url: r.url,
+          headline: r.headline,
           theme: r.theme,
           tier: r.tier,
           atype: r.atype,
@@ -128,8 +159,9 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
       <h3>Import coverage in bulk</h3>
       <div className="legend-note" style={{ marginTop: 0 }}>
         Upload a CSV of coverage links, for example when setting up a new client. Only the
-        link is required; date, outlet, theme, tier and type are used when present (common
-        column names like “Link”, “Publication” and “Date published” are recognised). Each
+        link is required. The publication, headline and publish date are read from each
+        article itself when the sheet doesn&#39;t give them (a “Title” column is treated as the
+        headline, not the publication). Tiers use this client&#39;s own ratings where set. Each
         piece is checked against every AI check measured so far as soon as it&#39;s imported.{" "}
         <button type="button" className="linkbtn" onClick={downloadTemplate}>
           Download the template
@@ -168,6 +200,12 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
 
       {rows && (
         <div style={{ marginTop: 12 }}>
+          {reading && (
+            <div className="legend-note">
+              Reading the publication, headline and date from each article… {reading.done} of{" "}
+              {reading.total}
+            </div>
+          )}
           <div className="legend-note">
             <b>{fileName}</b>: {rows.length} rows — <b>{ready.length} ready to import</b>
             {dupes > 0 && <>, {dupes} already logged (skipped)</>}
@@ -179,9 +217,8 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
                 <tr>
                   <th>Row</th>
                   <th>Date</th>
-                  <th>Outlet</th>
-                  <th>Link</th>
-                  <th>Theme</th>
+                  <th>Publication</th>
+                  <th>Headline / link</th>
                   <th>Tier</th>
                   <th>Status</th>
                 </tr>
@@ -191,11 +228,16 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
                   <tr key={r.line} style={r.errors.length || r.duplicate ? { opacity: 0.6 } : undefined}>
                     <td>{r.line}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{r.activity_date}</td>
-                    <td>{r.outlet}</td>
-                    <td style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {r.url}
+                    <td>{r.outlet || (reading ? <span className="muted">reading…</span> : "")}</td>
+                    <td style={{ maxWidth: 320 }}>
+                      {r.headline && <div style={{ fontSize: 13 }}>{r.headline}</div>}
+                      <div
+                        className="muted"
+                        style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      >
+                        {r.url}
+                      </div>
                     </td>
-                    <td>{r.theme || ""}</td>
                     <td>{r.tier}</td>
                     <td style={{ fontSize: 12 }}>
                       {r.errors.length ? (
@@ -217,7 +259,7 @@ export default function CoverageImport({ answers }: { answers: V2Answer[] | null
             </button>
           )}
           <div className="flex" style={{ marginTop: 10 }}>
-            <button className="btn sm" disabled={busy || !ready.length} onClick={importRows}>
+            <button className="btn sm" disabled={busy || !!reading || !ready.length} onClick={importRows}>
               {busy ? "Importing and checking…" : `Import ${ready.length} placement${ready.length === 1 ? "" : "s"}`}
             </button>
             <button className="btn sm ghost" disabled={busy} onClick={() => setRows(null)}>

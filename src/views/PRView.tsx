@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { Kpi } from "@/components/ui";
-import { todayISO } from "@/lib/format";
+import { host, todayISO } from "@/lib/format";
+import { outletFromDomain } from "@/lib/coverageImport";
+import { readPages } from "@/lib/coverageMeta";
+import type { PrActivity } from "@/lib/types";
 import {
   placementImpact,
   prCitedShare,
@@ -44,6 +47,33 @@ export default function PRView() {
   const { brand, data, mode, sb, toast, reload } = useAppState();
   const answers = useV2Answers();
   const [open, setOpen] = useState<string | null>(null);
+  const [tierState, setTierState] = useState<{ key: string; map: Map<string, string> } | null>(null);
+  const [tierVersion, setTierVersion] = useState(0);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ activity_date: "", outlet: "", headline: "", theme: "" });
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+
+  // This client's own tier for each publication (by site).
+  const brandId = brand?.id;
+  useEffect(() => {
+    if (!brandId) return;
+    let off = false;
+    sb.from("geo_outlet_tiers")
+      .select("domain,tier")
+      .eq("brand_id", brandId)
+      .then(({ data: rows }) => {
+        if (!off) {
+          setTierState({
+            key: brandId + ":" + tierVersion,
+            map: new Map((rows || []).map((r) => [r.domain, r.tier])),
+          });
+        }
+      });
+    return () => {
+      off = true;
+    };
+  }, [sb, brandId, tierVersion]);
+  const tiers = tierState?.map ?? new Map<string, string>();
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     date: todayISO(),
@@ -77,6 +107,122 @@ export default function PRView() {
           ? "Linked " + linked + " citation" + (linked > 1 ? "s" : "") + " to PR"
           : "No new citations matched (sources are recorded by each monthly check)",
       );
+    await reload();
+  }
+
+  /**
+   * Sets a placement's tier and remembers it as this client's tier for that
+   * publication; offers to apply it to the client's other pieces from there.
+   */
+  async function setTier(p: PrActivity, tier: string) {
+    const domain = host(p.url || "");
+    const { error } = await sb.from("geo_pr_activity").update({ tier }).eq("id", p.id);
+    if (error) return toast("Save failed: " + error.message);
+    if (domain) {
+      await sb
+        .from("geo_outlet_tiers")
+        .upsert({ brand_id: brand!.id, domain, tier, updated_at: new Date().toISOString() });
+      const others = data.pr.filter((x) => x.id !== p.id && host(x.url || "") === domain && x.tier !== tier);
+      if (
+        others.length &&
+        window.confirm(
+          `Set the other ${others.length} piece${others.length === 1 ? "" : "s"} from ${p.outlet} to ${tier} as well? ` +
+            `${tier} is now remembered for ${p.outlet} for ${brand!.name} (other clients keep their own rating).`,
+        )
+      ) {
+        await sb.from("geo_pr_activity").update({ tier }).in("id", others.map((x) => x.id));
+      }
+    }
+    toast(`${p.outlet}: ${tier}`);
+    setTierVersion((v) => v + 1);
+    await reload();
+  }
+
+  function startEdit(p: PrActivity) {
+    setEditId(p.id);
+    setDraft({
+      activity_date: p.activity_date,
+      outlet: p.outlet,
+      headline: p.headline || "",
+      theme: p.theme || "",
+    });
+  }
+
+  async function saveEdit(p: PrActivity) {
+    if (!draft.outlet.trim()) return toast("Publication name is required");
+    const { error } = await sb
+      .from("geo_pr_activity")
+      .update({
+        activity_date: draft.activity_date || p.activity_date,
+        outlet: draft.outlet.trim(),
+        headline: draft.headline.trim() || null,
+        theme: draft.theme.trim() || null,
+      })
+      .eq("id", p.id);
+    if (error) return toast("Save failed: " + error.message);
+    setEditId(null);
+    toast("Saved");
+    await reload();
+  }
+
+  /**
+   * Re-reads each placement's article page and fixes what an import got wrong:
+   * a headline sitting in the publication column, a publication guessed from
+   * the link, a missing headline, and a date that was only the import day.
+   */
+  async function refreshDetails() {
+    const withUrl = data.pr.filter((p) => p.url);
+    if (!withUrl.length) return toast("No placements with links");
+    setRefreshing("Reading articles…");
+    const pages = await readPages(
+      withUrl.map((p) => p.url!),
+      Object.fromEntries(withUrl.map((p) => [p.url!, p.headline || p.outlet])),
+      (done, total) => setRefreshing(`Reading articles… ${done} of ${total}`),
+    );
+    setRefreshing(null);
+    const updates: { p: PrActivity; patch: Partial<PrActivity> }[] = [];
+    let nOutlet = 0;
+    let nDate = 0;
+    let nHead = 0;
+    for (const p of withUrl) {
+      const page = pages.get(p.url!);
+      if (!page) continue;
+      const patch: Partial<PrActivity> = {};
+      const looksLikeHeadline =
+        p.outlet.trim().split(/\s+/).length > 5 ||
+        (!!page.headline && p.outlet.trim().toLowerCase() === page.headline.trim().toLowerCase()) ||
+        p.outlet === outletFromDomain(host(p.url!));
+      if (page.outlet && looksLikeHeadline && page.outlet !== p.outlet) {
+        patch.outlet = page.outlet;
+        nOutlet++;
+        if (!p.headline && p.outlet.split(/\s+/).length > 3) patch.headline = page.headline || p.outlet;
+      }
+      if (!p.headline && !patch.headline && page.headline) patch.headline = page.headline;
+      if (patch.headline) nHead++;
+      // Only replace dates that were just the day the piece was logged.
+      const loggedOn = (p.created_at || "").slice(0, 10);
+      if (page.date && p.activity_date === loggedOn && page.date !== p.activity_date) {
+        patch.activity_date = page.date;
+        nDate++;
+      }
+      if (Object.keys(patch).length) updates.push({ p, patch });
+    }
+    if (!updates.length) return toast("Publication details already look right");
+    if (
+      !window.confirm(
+        `Update ${updates.length} placement${updates.length === 1 ? "" : "s"} from their articles?\n\n` +
+          `• ${nOutlet} publication name${nOutlet === 1 ? "" : "s"}\n` +
+          `• ${nDate} publish date${nDate === 1 ? "" : "s"} (only where the date was the day it was logged)\n` +
+          `• ${nHead} headline${nHead === 1 ? "" : "s"}`,
+      )
+    )
+      return;
+    setRefreshing("Saving…");
+    for (const u of updates) {
+      await sb.from("geo_pr_activity").update(u.patch).eq("id", u.p.id);
+    }
+    setRefreshing(null);
+    toast(`Updated ${updates.length} placements`);
     await reload();
   }
 
@@ -136,6 +282,14 @@ export default function PRView() {
           >
             🔄 Re-check citations now
           </button>{" "}
+          <button
+            className="btn sm ghost"
+            disabled={!!refreshing}
+            onClick={refreshDetails}
+            title="Read each article again for its publication name, headline and date"
+          >
+            {refreshing || "Refresh publication details"}
+          </button>{" "}
           <span className="muted" style={{ fontSize: 12 }}>
             Matches each placement&#39;s article link against the sources cited in the AI
             answers; a home-page link can only be matched to the outlet.
@@ -148,7 +302,7 @@ export default function PRView() {
           <thead>
             <tr>
               <th>Date</th>
-              <th>Outlet</th>
+              <th>Publication</th>
               <th>Theme</th>
               <th>Result</th>
               <th title="Answers since publication that cite this exact article">Article cited in</th>
@@ -173,18 +327,82 @@ export default function PRView() {
                 const st = STATUS[i.status];
                 const expanded = open === i.pr.id;
                 const engines = [...new Set(i.articleHits.map((h) => h.engine))];
+                if (editId === i.pr.id) {
+                  return (
+                    <tr key={i.pr.id}>
+                      <td>
+                        <input
+                          type="date"
+                          value={draft.activity_date}
+                          onChange={(e) => setDraft({ ...draft, activity_date: e.target.value })}
+                        />
+                      </td>
+                      <td colSpan={2}>
+                        <input
+                          value={draft.outlet}
+                          placeholder="Publication"
+                          onChange={(e) => setDraft({ ...draft, outlet: e.target.value })}
+                        />
+                        <input
+                          value={draft.headline}
+                          placeholder="Headline"
+                          style={{ marginTop: 4 }}
+                          onChange={(e) => setDraft({ ...draft, headline: e.target.value })}
+                        />
+                        <input
+                          value={draft.theme}
+                          placeholder="Theme (e.g. AI claims)"
+                          style={{ marginTop: 4 }}
+                          onChange={(e) => setDraft({ ...draft, theme: e.target.value })}
+                        />
+                      </td>
+                      <td colSpan={4} className="muted" style={{ fontSize: 12 }}>
+                        The theme and headline decide which tracked questions count as related.
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <button className="btn sm" onClick={() => saveEdit(i.pr)}>
+                          Save
+                        </button>{" "}
+                        <button className="btn sm ghost" onClick={() => setEditId(null)}>
+                          Cancel
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }
+                const remembered = tiers.get(host(i.pr.url || ""));
                 return (
                   <tr key={i.pr.id}>
-                    <td>{i.pr.activity_date}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{i.pr.activity_date}</td>
                     <td>
                       {i.pr.url ? (
                         <a href={i.pr.url} target="_blank" rel="noreferrer">
-                          {i.pr.outlet}
+                          <b>{i.pr.outlet}</b>
                         </a>
                       ) : (
-                        i.pr.outlet
+                        <b>{i.pr.outlet}</b>
                       )}
-                      {i.pr.tier && <div className="muted" style={{ fontSize: 11 }}>{i.pr.tier}</div>}
+                      {i.pr.headline && (
+                        <div style={{ fontSize: 12, maxWidth: 320 }}>{i.pr.headline}</div>
+                      )}
+                      {ro ? (
+                        i.pr.tier && <div className="muted" style={{ fontSize: 11 }}>{i.pr.tier}</div>
+                      ) : (
+                        <select
+                          className="tier-select"
+                          value={i.pr.tier || "Tier 2"}
+                          title={
+                            remembered
+                              ? `${remembered} is this client's rating for ${i.pr.outlet}`
+                              : "Set how this client rates this publication"
+                          }
+                          onChange={(e) => setTier(i.pr, e.target.value)}
+                        >
+                          <option>Tier 1</option>
+                          <option>Tier 2</option>
+                          <option>Tier 3</option>
+                        </select>
+                      )}
                     </td>
                     <td>{i.pr.theme || ""}</td>
                     <td>
@@ -244,7 +462,10 @@ export default function PRView() {
                       )}
                     </td>
                     {!ro && (
-                      <td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <button className="btn sm ghost" onClick={() => startEdit(i.pr)} title="Edit date, publication, headline, theme">
+                          Edit
+                        </button>{" "}
                         <button className="btn sm danger" onClick={() => delPR(i.pr.id)}>
                           Remove
                         </button>
@@ -375,7 +596,7 @@ export default function PRView() {
           </div>
         </div>
       )}
-      {!ro && <CoverageImport answers={answers} />}
+      {!ro && <CoverageImport answers={answers} tiers={tiers} />}
     </>
   );
 }

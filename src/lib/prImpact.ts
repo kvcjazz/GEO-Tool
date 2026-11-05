@@ -184,7 +184,9 @@ export function placementImpact(
 
   // 3. Related questions.
   const own = new Set(brandWords.flatMap(words));
-  const keywords = [...new Set([...words(pr.theme || ""), ...slugWords(pr.url)])].filter(
+  const keywords = [
+    ...new Set([...words(pr.theme || ""), ...words(pr.headline || ""), ...slugWords(pr.url)]),
+  ].filter(
     (w) => !own.has(w),
   );
   const related = prompts
