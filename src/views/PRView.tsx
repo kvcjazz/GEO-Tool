@@ -3,17 +3,16 @@
 import { useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { Kpi } from "@/components/ui";
-import { host, todayISO } from "@/lib/format";
-import { rawUrls } from "@/lib/targets";
+import { todayISO } from "@/lib/format";
 import {
-  isArticleUrl,
   placementImpact,
   prCitedShare,
-  sameArticle,
   type PlacementImpact,
   type Rate,
 } from "@/lib/prImpact";
 import { useV2Answers } from "@/state/useV2Answers";
+import { applyCitationLinks, citationLinks } from "@/lib/prLinks";
+import CoverageImport from "@/components/CoverageImport";
 
 const STATUS: Record<PlacementImpact["status"], { label: string; cls: string }> = {
   cited: { label: "Article cited by AI", cls: "t-yes" },
@@ -70,39 +69,8 @@ export default function PRView() {
   const articlesCited = impacts.filter((i) => i.articleHits.length).length;
   const share = answers ? prCitedShare(data.pr, answers) : null;
 
-  /**
-   * Links answers in the current check to the placement they cite: the exact
-   * article where the placement has an article URL, otherwise the outlet's
-   * site. Placements cited in any check since publication are flagged.
-   */
   async function recheckCitations(showToast: boolean) {
-    let linked = 0;
-    const toLink: { id: string; pr: string }[] = [];
-    const flag = new Set<string>(impacts.filter((i) => i.articleHits.length).map((i) => i.pr.id));
-    data.pr.forEach((p) => {
-      const d = host(p.url);
-      if (!d) return;
-      const article = isArticleUrl(p.url);
-      data.responses.forEach((r) => {
-        const hit = article
-          ? rawUrls(r.raw).some((u) => sameArticle(u, p.url!))
-          : !!r.cited_sources && r.cited_sources.toLowerCase().includes(d);
-        if (hit) {
-          flag.add(p.id);
-          if (r.cited_pr_id !== p.id) toLink.push({ id: r.id, pr: p.id });
-        }
-      });
-    });
-    for (const u of toLink) {
-      const { error } = await sb
-        .from("geo_responses")
-        .update({ cited_pr_id: u.pr })
-        .eq("id", u.id);
-      if (!error) linked++;
-    }
-    for (const id of flag) {
-      await sb.from("geo_pr_activity").update({ cited: true }).eq("id", id);
-    }
+    const linked = await applyCitationLinks(sb, citationLinks(data.pr, data.responses, answers));
     if (showToast)
       toast(
         linked
@@ -125,13 +93,14 @@ export default function PRView() {
       atype: form.atype,
       cited: false,
     };
-    const { error } = await sb.from("geo_pr_activity").insert(rec);
+    const { data: added, error } = await sb.from("geo_pr_activity").insert(rec).select("id,url,activity_date");
     if (error) {
       setBusy(false);
       return toast("Failed");
     }
+    // Link the new placement (the list in hand predates it).
+    await applyCitationLinks(sb, citationLinks(added || [], data.responses, answers));
     await reload();
-    await recheckCitations(false);
     setForm({
       date: todayISO(),
       outlet: "",
@@ -406,6 +375,7 @@ export default function PRView() {
           </div>
         </div>
       )}
+      {!ro && <CoverageImport answers={answers} />}
     </>
   );
 }
