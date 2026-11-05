@@ -34,3 +34,18 @@ Deno.test("fallbacks: title suffix and date in the address", () => {
   assertEquals(dateFromUrl("https://iireporter.com/hippo-to-expand-homeowners-program"), null);
   assertEquals(parsePage("<title>Blocked</title>", "https://insurance-edge.net/2026/10/30/hippo-teams-up/").date, "2026-10-30");
 });
+
+Deno.test("domain-style site name loses to the title's publication; entities decoded", () => {
+  const html = `<title>Hippo&#039;s GWP rises 60% for Q3&#039;26 - Reinsurance News</title>
+    <meta property="og:site_name" content="ReinsuranceNe.ws">
+    <meta property="article:published_time" content="2026-10-29T10:00:00+00:00">`;
+  assertEquals(parsePage(html, "https://www.reinsurancene.ws/x/"), {
+    outlet: "Reinsurance News",
+    headline: "Hippo's GWP rises 60% for Q3'26",
+    date: "2026-10-29",
+  });
+  assertEquals(
+    parsePage("<title>AI isn&rsquo;t failing; your enterprise systems are | TechRadar</title>", "https://www.techradar.com/pro/x").outlet,
+    "TechRadar",
+  );
+});

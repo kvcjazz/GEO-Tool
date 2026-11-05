@@ -17,6 +17,11 @@ function decode(s: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
+    .replace(/&(rsquo|lsquo);/g, "’")
+    .replace(/&(rdquo|ldquo);/g, '"')
+    .replace(/&ndash;/g, "–")
+    .replace(/&mdash;/g, "—")
+    .replace(/&hellip;/g, "…")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
     .replace(/\s+/g, " ")
@@ -118,6 +123,9 @@ export function parsePage(html: string, url: string): PageMeta {
   let outlet = pubName || (site && !site.startsWith("@") ? site : "") || fromTitle.outlet || "";
   // Generic or wrong values sometimes appear in site_name.
   if (/^(home|news|wordpress|index|untitled)$/i.test(outlet)) outlet = fromTitle.outlet || "";
+  // A site name written as a web address ("ReinsuranceNe.ws") loses to the
+  // publication name in the page title ("… - Reinsurance News").
+  if (/^[\w-]+(\.[\w-]+)+$/.test(outlet) && fromTitle.outlet) outlet = fromTitle.outlet;
 
   const headline = ldHeadline || splitTitle(ogTitle || titleTag || "").headline || null;
   const date = isoDay(String(art.datePublished || "")) ||
