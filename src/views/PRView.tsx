@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { Kpi } from "@/components/ui";
 import { host, todayISO } from "@/lib/format";
-import { outletFromDomain } from "@/lib/coverageImport";
-import { readPages } from "@/lib/coverageMeta";
+import { callFn } from "@/lib/callFn";
+import { CoverageRepairSchema } from "@/lib/schemas";
 import type { PrActivity } from "@/lib/types";
 import {
   placementImpact,
@@ -74,6 +74,19 @@ export default function PRView() {
     };
   }, [sb, brandId, tierVersion]);
   const tiers = tierState?.map ?? new Map<string, string>();
+
+  // Placements whose "publication" is really a headline (an older import):
+  // fix them once automatically rather than waiting for someone to notice.
+  const autoFixed = useRef<Set<string>>(new Set());
+  const badNames = data.pr.filter(
+    (p) => p.url && (p.outlet.trim().split(/\s+/).length > 5 || /\s[|–—-]\s\S/.test(p.outlet)),
+  ).length;
+  useEffect(() => {
+    if (!brandId || mode !== "team" || !badNames || autoFixed.current.has(brandId)) return;
+    autoFixed.current.add(brandId);
+    refreshDetails(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandId, badNames, mode]);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     date: todayISO(),
@@ -166,64 +179,29 @@ export default function PRView() {
   }
 
   /**
-   * Re-reads each placement's article page and fixes what an import got wrong:
-   * a headline sitting in the publication column, a publication guessed from
-   * the link, a missing headline, and a date that was only the import day.
+   * Re-reads each placement's article and fixes what an import got wrong, on
+   * the server (geo-coverage-meta repair): publication names that are really
+   * headlines or guesses, missing headlines, and dates that were only the day
+   * the piece was logged. Dates the team entered are never changed.
    */
-  async function refreshDetails() {
-    const withUrl = data.pr.filter((p) => p.url);
-    if (!withUrl.length) return toast("No placements with links");
-    setRefreshing("Reading articles…");
-    const pages = await readPages(
-      withUrl.map((p) => p.url!),
-      Object.fromEntries(withUrl.map((p) => [p.url!, p.headline || p.outlet])),
-      (done, total) => setRefreshing(`Reading articles… ${done} of ${total}`),
-    );
-    setRefreshing(null);
-    const updates: { p: PrActivity; patch: Partial<PrActivity> }[] = [];
-    let nOutlet = 0;
-    let nDate = 0;
-    let nHead = 0;
-    for (const p of withUrl) {
-      const page = pages.get(p.url!);
-      if (!page) continue;
-      const patch: Partial<PrActivity> = {};
-      const looksLikeHeadline =
-        p.outlet.trim().split(/\s+/).length > 5 ||
-        (!!page.headline && p.outlet.trim().toLowerCase() === page.headline.trim().toLowerCase()) ||
-        p.outlet === outletFromDomain(host(p.url!));
-      if (page.outlet && looksLikeHeadline && page.outlet !== p.outlet) {
-        patch.outlet = page.outlet;
-        nOutlet++;
-        if (!p.headline && p.outlet.split(/\s+/).length > 3) patch.headline = page.headline || p.outlet;
-      }
-      if (!p.headline && !patch.headline && page.headline) patch.headline = page.headline;
-      if (patch.headline) nHead++;
-      // Only replace dates that were just the day the piece was logged.
-      const loggedOn = (p.created_at || "").slice(0, 10);
-      if (page.date && p.activity_date === loggedOn && page.date !== p.activity_date) {
-        patch.activity_date = page.date;
-        nDate++;
-      }
-      if (Object.keys(patch).length) updates.push({ p, patch });
-    }
-    if (!updates.length) return toast("Publication details already look right");
-    if (
-      !window.confirm(
-        `Update ${updates.length} placement${updates.length === 1 ? "" : "s"} from their articles?\n\n` +
-          `• ${nOutlet} publication name${nOutlet === 1 ? "" : "s"}\n` +
-          `• ${nDate} publish date${nDate === 1 ? "" : "s"} (only where the date was the day it was logged)\n` +
-          `• ${nHead} headline${nHead === 1 ? "" : "s"}`,
-      )
-    )
-      return;
-    setRefreshing("Saving…");
-    for (const u of updates) {
-      await sb.from("geo_pr_activity").update(u.patch).eq("id", u.p.id);
+  async function refreshDetails(auto = false) {
+    if (!data.pr.some((p) => p.url)) return auto ? undefined : toast("No placements with links");
+    setRefreshing(auto ? "Fixing publication names…" : "Reading articles…");
+    try {
+      const j = await callFn("geo-coverage-meta", { brand_id: brand!.id, repair: true }, CoverageRepairSchema);
+      if (!j.ok) throw new Error(j.error || "failed");
+      const f = j.fixed;
+      if (f && f.rows) {
+        toast(
+          `Updated ${f.rows} placement${f.rows === 1 ? "" : "s"} from their articles: ` +
+            `${f.outlet} publication names, ${f.date} dates, ${f.headline} headlines`,
+        );
+        await reload();
+      } else if (!auto) toast("Publication details already look right");
+    } catch (e) {
+      if (!auto) toast("Couldn't refresh: " + String(e));
     }
     setRefreshing(null);
-    toast(`Updated ${updates.length} placements`);
-    await reload();
   }
 
   async function addPR() {
@@ -285,7 +263,7 @@ export default function PRView() {
           <button
             className="btn sm ghost"
             disabled={!!refreshing}
-            onClick={refreshDetails}
+            onClick={() => refreshDetails(false)}
             title="Read each article again for its publication name, headline and date"
           >
             {refreshing || "Refresh publication details"}

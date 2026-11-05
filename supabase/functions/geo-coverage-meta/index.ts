@@ -7,11 +7,21 @@
 // outlets still unknown, one AI call naming the publications behind the
 // remaining sites → the bare site name.
 //
-// Input: { urls: string[] (≤ 60), headlines?: { [url]: string } }.
-// Output: { ok, items: [{ url, outlet, headline, date, outlet_from }] }.
+// Two modes:
+//   { urls: string[] (≤ 60), headlines?: { [url]: string } }
+//     → { ok, items: [{ url, outlet, headline, date, outlet_from }] }   (lookup only)
+//   { brand_id, repair: true }
+//     → re-reads every placement of that client and fixes, in the database,
+//       publication names that are really headlines or guesses, missing
+//       headlines, and dates that were only the day the piece was logged
+//       (_shared/coverage.ts decides). Returns what it changed.
+// Callers: a signed-in user (lookups), a signed-in user who can edit the
+// client or the cron secret (repair). verify_jwt is off so the cron secret
+// works; every path checks auth itself.
 import { callAnalyst, CORS, domainOf, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 import { dateFromUrl, parsePage, splitTitle, type PageMeta } from "../_shared/pagemeta.ts";
+import { repairPatch, type Placement } from "../_shared/coverage.ts";
 
 type Item = PageMeta & { url: string; outlet_from: "page" | "headline" | "ai" | "site" };
 
@@ -55,15 +65,40 @@ function siteName(domain: string): string {
   return base.charAt(0).toUpperCase() + base.slice(1);
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  if (!(await signedIn(req))) return json({ ok: false, error: "Sign-in required." }, 401);
-  const body = (await req.json().catch(() => ({}))) as { urls?: string[]; headlines?: Record<string, string> };
-  const urls = [...new Set((body.urls || []).map((u) => String(u || "").trim()).filter((u) => /^https?:\/\//i.test(u)))]
-    .slice(0, MAX);
-  if (!urls.length) return json({ ok: true, items: [] });
-  const headlines = body.headlines || {};
+const SB = Deno.env.get("SUPABASE_URL") || "";
+const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
+function rest(path: string, init: { method?: string; body?: unknown; auth?: string; apikey?: string } = {}) {
+  return fetch(SB + "/rest/v1/" + path, {
+    method: init.method || "GET",
+    headers: {
+      apikey: init.apikey || SR,
+      authorization: init.auth || "Bearer " + SR,
+      "content-type": "application/json",
+    },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+}
+
+/** Cron secret, or a signed-in user allowed to edit this client. */
+async function canRepair(req: Request, bid: string): Promise<boolean> {
+  const sent = req.headers.get("x-geo-cron") || "";
+  if (sent) {
+    const r = await rest("rpc/geo_cron_secret_ok", { method: "POST", body: { s: sent } });
+    if (r.ok && (await r.json()) === true) return true;
+  }
+  if (!(await signedIn(req))) return false;
+  const r = await rest("rpc/geo_can_edit_brand", {
+    method: "POST",
+    body: { bid },
+    auth: req.headers.get("authorization") || "",
+    apikey: req.headers.get("apikey") || Deno.env.get("SUPABASE_ANON_KEY") || "",
+  });
+  return r.ok && (await r.json()) === true;
+}
+
+/** Publication, headline and date for each link (page → headline suffix → AI → site name). */
+async function resolve(urls: string[], headlines: Record<string, string>): Promise<Item[]> {
   const items: Item[] = new Array(urls.length);
   let next = 0;
   await Promise.all(
@@ -119,5 +154,59 @@ Deno.serve(async (req: Request) => {
       }
     }
   }
-  return json({ ok: true, items });
+  return items;
+}
+
+async function repair(bid: string): Promise<Response> {
+  const res = await rest(
+    `geo_pr_activity?brand_id=eq.${bid}&url=not.is.null&select=id,url,outlet,headline,activity_date,created_at&order=created_at.desc&limit=200`,
+  );
+  const rows = (res.ok ? await res.json() : []) as Placement[];
+  const fixed = { outlet: 0, headline: 0, date: 0, rows: 0 };
+  const changes: { id: string; before: string; after: string }[] = [];
+  for (let i = 0; i < rows.length; i += MAX) {
+    const chunk = rows.slice(i, i + MAX);
+    const found = await resolve(
+      chunk.map((p) => p.url!),
+      Object.fromEntries(chunk.map((p) => [p.url!, p.headline || p.outlet])),
+    );
+    const byUrl = new Map(found.map((f) => [f.url, f]));
+    for (const p of chunk) {
+      const patch = repairPatch(p, byUrl.get(p.url!));
+      if (!patch) continue;
+      const w = await rest(`geo_pr_activity?id=eq.${p.id}`, { method: "PATCH", body: patch });
+      if (!w.ok) continue;
+      fixed.rows++;
+      if (patch.outlet) {
+        fixed.outlet++;
+        changes.push({ id: p.id, before: p.outlet, after: patch.outlet });
+      }
+      if (patch.headline) fixed.headline++;
+      if (patch.activity_date) fixed.date++;
+    }
+  }
+  return json({ ok: true, checked: rows.length, fixed, changes: changes.slice(0, 100) });
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  const body = (await req.json().catch(() => ({}))) as {
+    urls?: string[];
+    headlines?: Record<string, string>;
+    brand_id?: string;
+    repair?: boolean;
+  };
+
+  if (body.repair) {
+    const bid = String(body.brand_id || "");
+    if (!/^[0-9a-f-]{36}$/i.test(bid)) return json({ ok: false, error: "brand_id required" }, 400);
+    if (!(await canRepair(req, bid))) return json({ ok: false, error: "Not allowed." }, 401);
+    return repair(bid);
+  }
+
+  if (!(await signedIn(req))) return json({ ok: false, error: "Sign-in required." }, 401);
+  const urls = [...new Set((body.urls || []).map((u) => String(u || "").trim()).filter((u) => /^https?:\/\//i.test(u)))]
+    .slice(0, MAX);
+  if (!urls.length) return json({ ok: true, items: [] });
+  return json({ ok: true, items: await resolve(urls, body.headlines || {}) });
 });

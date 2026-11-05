@@ -180,3 +180,12 @@ export const CoverageMetaSchema = z.object({
     .nullish(),
   error: z.string().nullish(),
 });
+
+export const CoverageRepairSchema = z.object({
+  ok: z.boolean(),
+  checked: z.number().nullish(),
+  fixed: z
+    .object({ outlet: z.number(), headline: z.number(), date: z.number(), rows: z.number() })
+    .nullish(),
+  error: z.string().nullish(),
+});
