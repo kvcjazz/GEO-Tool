@@ -132,3 +132,25 @@ reused untouched.
 - No silent template fallback for suggestions any more: failures show the
   reason. Backlog "tailor" uses the same brief; a template fallback is shown
   with its reason and is not saved.
+
+## 2026-11-05 — Honest engines, PR impact, fact sheet, Radar evidence, clean-up
+
+- **Engines:** "Copilot" (the OpenAI model asked twice) is no longer measured
+  or scored; its weight moved to ChatGPT. Engines without a key (Grok) are left
+  out of the score. Migration `20261105130000_drop_copilot_engine`.
+- **PR impact:** Coverage & impact shows per placement whether the exact
+  article is cited in AI answers, outlet citations before → after, and
+  visibility on topic-related questions before → after (like-for-like v2
+  checks). `geo_v2_answers()` returns citation URLs without answer text.
+  New **Monthly report** area, printable to PDF.
+- **Fact sheet + market:** `geo_brands.fact_sheet` (ground truth) and
+  `market_country` (ISO). Fact sheet feeds every AI step and geo-measure's
+  accuracy grading (error noted on the answer); market is passed as the web
+  search location to Claude, OpenAI and Perplexity.
+- **Radar / news / listening:** geo-radar gets the measurement brief and must
+  cite evidence; news moved from GDELT (TLS never completes from Supabase) to
+  Google News RSS; geo-listen asks unprimed, searched questions and requires a
+  user or the cron secret.
+- **Titles to target** (PR #4 branch) merged into this branch.
+- **Security:** geo-run-batch, geo-publish, geo-pilot, geo-diag replaced by a
+  410 stub; geo-advise and geo-listen no longer open.

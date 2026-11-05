@@ -70,9 +70,17 @@ Next.js app never needs them, it only calls the functions.
 
 - Supabase project `ymnulfluxjgqacodzfxq`.
 - Tables are `geo_*`-prefixed with RLS (`FOR ALL TO authenticated`).
-- Edge functions: `geo-run`, `geo-run-batch`, `geo-radar`, `geo-news`,
-  `geo-listen`, `geo-engines`, `geo-advise`.
-- Two `pg_cron` jobs run monthly snapshots + listening scans server-side.
+- Edge functions with source in `supabase/functions/`: `geo-measure`,
+  `geo-advise`, `geo-radar`, `geo-news`, `geo-listen`, `geo-targets`,
+  `geo-classify-sources` (shared code in `_shared/`). Only `geo-engines`,
+  `geo-users` and the unused v1 `geo-run` still live only in Supabase.
+- Retired (deployed as a 410 stub from `retired/`): `geo-run-batch`,
+  `geo-publish`, `geo-pilot`, `geo-diag`.
+- `pg_cron`: monthly snapshot (06:00 on the 1st), monthly listening (07:00,
+  authenticated with the `geo_cron_secret` Vault secret), measurement queue
+  dispatcher (every minute).
+- News comes from Google News RSS (`_shared/news.ts`); GDELT is unreachable
+  from Supabase.
 
 ### Measurement v2 (`geo-measure`)
 
