@@ -14,7 +14,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { callFn } from "@/lib/callFn";
 import { ClassifySourcesSchema, EngineStatusSchema } from "@/lib/schemas";
 import { gapSources } from "@/lib/sources";
-import { AREAS, CLIENT_AREAS, LEGACY_VIEWS } from "@/lib/constants";
+import { AREAS, CLIENT_AREAS, LEGACY_VIEWS, measuredOnly } from "@/lib/constants";
 import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
 import type { Scorable } from "@/lib/scoring";
@@ -310,7 +310,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                 )
             : Promise.resolve({ data: [] }),
         ]);
-        responses = (resp.data || []) as Response[];
+        responses = measuredOnly((resp.data || []) as Response[]);
         sov =
           currentRun.method === "v2"
             ? sovFromSamples(responses, (comps.data || []) as Competitor[])
@@ -318,7 +318,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
                 player: s.player,
                 mentions: s.mentions,
               }));
-        for (const row of (hist.data || []) as (Scorable & { run_id: string })[]) {
+        for (const row of measuredOnly((hist.data || []) as (Scorable & { run_id: string })[])) {
           (history[row.run_id] ||= []).push(row);
         }
       }

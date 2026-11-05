@@ -2,14 +2,21 @@
 // these values or the default weights: the scoring model is the credibility
 // core of the product and must reproduce the prototype exactly.
 
+// Microsoft Copilot is not listed: it has no public API, and the "Copilot"
+// the pilot measured was the same OpenAI model as ChatGPT asked twice, which
+// double-counted ChatGPT. Its old answers are ignored (see measuredOnly) and
+// its weight was folded into ChatGPT (migration 20261105130000).
 export const ENGINES = [
   "ChatGPT",
   "Google AI / Gemini",
   "Perplexity",
-  "Copilot",
   "Claude",
   "Grok",
 ] as const;
+/** Drops answers from engines no longer measured (the old "Copilot" rows). */
+export function measuredOnly<T extends { engine: string }>(rows: T[]): T[] {
+  return rows.filter((r) => (ENGINES as readonly string[]).includes(r.engine));
+}
 export type Engine = (typeof ENGINES)[number];
 
 export const PROM: Record<string, number> = {
@@ -60,10 +67,9 @@ export const DEFAULT_METRIC_WEIGHTS: MetricWeights = {
 };
 
 export const DEFAULT_ENGINE_WEIGHTS: Record<string, number> = {
-  ChatGPT: 30,
+  ChatGPT: 42, // includes the 12 that was Copilot's (Copilot runs on OpenAI models)
   "Google AI / Gemini": 22,
   Perplexity: 18,
-  Copilot: 12,
   Claude: 10,
   Grok: 8,
 };

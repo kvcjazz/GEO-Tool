@@ -64,12 +64,15 @@ export const MODEL_CHAIN: Record<ProviderId, string[]> = {
   xai: ["grok-4.6", "grok-4.5", "grok-4.3", "grok-4"],
 };
 
-/** The engine names the UI shows, mapped to the provider that answers them. */
+/**
+ * The engine names the UI shows, mapped to the provider that answers them.
+ * Microsoft Copilot has no public API, so it is not measured (it used to be
+ * the OpenAI model again, which double-counted ChatGPT).
+ */
 export const ENGINE_PROVIDER: Record<string, ProviderId> = {
   ChatGPT: "openai",
   "Google AI / Gemini": "gemini",
   Perplexity: "perplexity",
-  Copilot: "openai",
   Claude: "anthropic",
   Grok: "xai",
 };
@@ -79,7 +82,6 @@ export const ENGINES: string[] = [
   "ChatGPT",
   "Google AI / Gemini",
   "Perplexity",
-  "Copilot",
   "Claude",
   "Grok",
 ];
@@ -133,7 +135,6 @@ export function providerFor(engine: string): ProviderId | null {
   if (e.includes("chatgpt") || e.includes("gpt") || e.includes("openai")) {
     return "openai";
   }
-  if (e.includes("copilot")) return "openai";
   return null;
 }
 

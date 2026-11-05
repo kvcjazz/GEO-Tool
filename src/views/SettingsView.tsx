@@ -1224,8 +1224,11 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           <div className="legend-note">
             To add an engine, put its key in Supabase → Project Settings → Edge Functions
             secrets: <b>OPENAI_API_KEY</b>, <b>GEMINI_API_KEY</b>,{" "}
-            <b>PERPLEXITY_API_KEY</b>, <b>XAI_API_KEY</b>. Perplexity returns real
-            citations.
+            <b>PERPLEXITY_API_KEY</b>, <b>XAI_API_KEY</b> (Grok). An engine without a
+            key is left out of the score rather than counted as zero.
+            <br />
+            <b>Microsoft Copilot isn&#39;t measured:</b> it has no public API. It runs on
+            OpenAI models with Bing search, so ChatGPT is the closest guide to it.
           </div>
         </div>
         {/* Data tools */}

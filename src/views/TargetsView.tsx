@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAppState } from "@/state/AppState";
-import { ENGINES } from "@/lib/constants";
+import { ENGINES, measuredOnly } from "@/lib/constants";
 import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
 import { memoryText } from "@/lib/memory";
@@ -99,7 +99,7 @@ export default function TargetsView() {
           earlier.map((r) => r.id),
         )
         .eq("web_search", true);
-      for (const r of rows || []) {
+      for (const r of measuredOnly(rows || [])) {
         answers.push({
           run_id: r.run_id,
           prompt_id: r.prompt_id,
@@ -122,8 +122,7 @@ export default function TargetsView() {
    */
   async function probe(): Promise<CitedAnswer[] | null> {
     const qs = probeQuestions(data.prompts);
-    // Copilot is answered by the same provider as ChatGPT, so it adds nothing here.
-    const live = ENGINES.filter((e) => engines[e] && e !== "Copilot");
+    const live = ENGINES.filter((e) => engines[e]);
     if (!qs.length) {
       toast("Add some buyer questions in Client setup first");
       return null;
