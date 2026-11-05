@@ -153,7 +153,19 @@ export type ModelResult = {
 export type CallOptions = {
   /** Answer with the provider's own web-search tool switched on. */
   webSearch?: boolean;
+  /**
+   * The buyer's country (ISO 3166-1 alpha-2, e.g. "GB"), passed to the search
+   * as an approximate user location where the provider supports it (Claude,
+   * OpenAI, Perplexity). Gemini and xAI have no such option and ignore it.
+   */
+  country?: string | null;
 };
+
+/** A valid upper-case ISO 3166-1 alpha-2 code, or null. */
+export function countryCode(c: unknown): string | null {
+  const v = String(c ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(v) ? v : null;
+}
 
 type Attempt = {
   ok: boolean;
@@ -259,8 +271,14 @@ async function anthropicSearch(
   prompt: string,
   model: string,
   maxTokens: number,
+  country: string | null,
 ): Promise<Attempt> {
-  const tool = { type: "web_search_20250305", name: "web_search", max_uses: 3 };
+  const tool = {
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 3,
+    ...(country ? { user_location: { type: "approximate", country } } : {}),
+  };
   const messages: { role: string; content: unknown }[] = [
     { role: "user", content: prompt },
   ];
@@ -306,11 +324,16 @@ async function responsesSearch(
   key: string,
   prompt: string,
   model: string,
+  country: string | null = null,
 ): Promise<Attempt> {
+  const tool = {
+    type: "web_search",
+    ...(country ? { user_location: { type: "approximate", country } } : {}),
+  };
   const r = await fetch(url, {
     method: "POST",
     headers: { authorization: "Bearer " + key, "content-type": "application/json" },
-    body: JSON.stringify({ model, input: prompt, tools: [{ type: "web_search" }] }),
+    body: JSON.stringify({ model, input: prompt, tools: [tool] }),
     signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
   const j = (await readJson(r)) as {
@@ -359,9 +382,10 @@ async function attempt(
   model: string,
   maxTokens: number,
   webSearch: boolean,
+  country: string | null,
 ): Promise<Attempt> {
   if (provider === "anthropic") {
-    if (webSearch) return anthropicSearch(key, prompt, model, maxTokens);
+    if (webSearch) return anthropicSearch(key, prompt, model, maxTokens, country);
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -387,7 +411,7 @@ async function attempt(
   }
 
   if (webSearch && provider === "openai") {
-    return responsesSearch("https://api.openai.com/v1/responses", key, prompt, model);
+    return responsesSearch("https://api.openai.com/v1/responses", key, prompt, model, country);
   }
   if (webSearch && provider === "xai") {
     return responsesSearch("https://api.x.ai/v1/responses", key, prompt, model);
@@ -411,6 +435,9 @@ async function attempt(
       body: JSON.stringify({
         model,
         messages: [{ role: "user", content: prompt }],
+        ...(provider === "perplexity" && country
+          ? { web_search_options: { user_location: { country } } }
+          : {}),
       }),
     });
     const j = (await readJson(r)) as {
@@ -477,6 +504,8 @@ export async function callModel(
   // Perplexity searches on every call; the others only when asked.
   const webSearch = !!opts.webSearch && provider !== "perplexity";
   const searched = webSearch || provider === "perplexity";
+  // Location only matters when the answer is searched.
+  const country = searched ? countryCode(opts.country) : null;
   let lastError = "";
   let lastModel = "";
   for (const model of candidates(provider)) {
@@ -484,7 +513,7 @@ export async function callModel(
     for (let tries = 0; tries < 2; tries++) {
       let a: Attempt;
       try {
-        a = await attempt(provider, key, prompt, model, maxTokens, webSearch);
+        a = await attempt(provider, key, prompt, model, maxTokens, webSearch, country);
       } catch (e) {
         const timedOut = e instanceof DOMException && e.name === "TimeoutError";
         a = timedOut
@@ -511,6 +540,12 @@ export async function callModel(
       if (isModelUnavailable(a.status, a.message)) break; // next model id
       const transient = a.status === 429 || a.status >= 500 || a.status === 0;
       if (!transient) {
+        // A provider that rejects the location (e.g. an unsupported country)
+        // is asked again without it, rather than losing the search.
+        if (country) {
+          const retry = await callModel(provider, key, prompt, maxTokens, { ...opts, country: null });
+          return { ...retry, searchError: retry.searchError || "location ignored: " + lastError };
+        }
         // Auth or bad request: another model id will not help. A rejected
         // search request still gets a plain answer, flagged as unsearched.
         if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError);

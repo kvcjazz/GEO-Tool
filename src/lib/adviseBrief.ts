@@ -1,6 +1,7 @@
 import type { Brand, ContextItem, Response } from "./types";
 import type { BrandData } from "@/state/AppState";
 import { ctxString } from "./context";
+import { factSheetText } from "./factSheet";
 import { namesBrand, reachSplit } from "./questions";
 import { gapSources, isTarget, KIND_LABELS } from "./sources";
 
@@ -17,6 +18,8 @@ export type AdviseBrief = {
     website: string | null;
     sector: string | null;
     market: string | null;
+    /** ISO country the engines' web search is located in. */
+    market_country: string | null;
     objective: string | null;
     positioning: string | null;
     audience: string | null;
@@ -27,6 +30,8 @@ export type AdviseBrief = {
     newsworthy: string | null;
   };
   competitors: { name: string; aliases: string[]; mentions_last_check: number | null }[];
+  /** The team's confirmed facts about the client (ground truth). */
+  fact_sheet: string;
   /** Strategy-call notes and uploaded documents, team-steered items first. */
   client_notes: string;
   questions: {
@@ -93,6 +98,7 @@ export function buildAdviseBrief(brand: Brand, data: BrandData): AdviseBrief {
       website: brand.website,
       sector: brand.sector,
       market: brand.pr_region,
+      market_country: brand.market_country,
       objective: brand.objective,
       positioning: brand.positioning,
       audience: brand.audience,
@@ -107,6 +113,7 @@ export function buildAdviseBrief(brand: Brand, data: BrandData): AdviseBrief {
       aliases: c.aliases || [],
       mentions_last_check: hasCheck ? (sovBy.get(c.name.toLowerCase()) ?? 0) : null,
     })),
+    fact_sheet: factSheetText(brand.fact_sheet),
     client_notes: ctxString(steeredFirst(data.context), 12000),
     questions: data.prompts.map((p) => {
       const rows = byPrompt.get(p.id) || [];

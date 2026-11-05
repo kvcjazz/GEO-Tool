@@ -157,6 +157,11 @@ export default function ReportView() {
     })
     .slice(0, 8);
 
+  const promptText = new Map(data.prompts.map((p) => [p.id, p.text]));
+  const errors = responses
+    .filter((r) => r.mentioned && (r.accuracy === "Major error" || r.accuracy === "Minor error"))
+    .sort((a, b) => (a.accuracy === "Major error" ? 0 : 1) - (b.accuracy === "Major error" ? 0 : 1))
+    .slice(0, 8);
   const measured = ENGINES.filter((e) => perEngine.some((p) => p.engine === e));
   const notMeasured = ENGINES.filter((e) => !measured.includes(e as never) && !engines[e]);
   const questions = new Set(responses.map((r) => r.prompt_id)).size;
@@ -354,6 +359,35 @@ export default function ReportView() {
           </div>
         </div>
       </div>
+
+      {errors.length > 0 && (
+        <div className="card">
+          <h3>What AI gets wrong about {brand.name}</h3>
+          <table>
+            <tbody>
+              {errors.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <span className={`tag ${r.accuracy === "Major error" ? "t-no" : "t-na"}`}>
+                      {r.accuracy}
+                    </span>
+                  </td>
+                  <td>
+                    {(r.notes || "").replace(/^Accuracy:\s*/, "") || "Inaccurate statement"}
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {r.engine} · &#39;{promptText.get(r.prompt_id) || ""}&#39;
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="legend-note">
+            Judged against the fact sheet {brand.name} confirmed. Fixing the source (your
+            site, directories, coverage) is how the engines re-learn it.
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h3>PR impact</h3>

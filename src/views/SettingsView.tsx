@@ -16,6 +16,7 @@ import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
 import { setupSteps } from "@/lib/setup";
+import { FACT_FIELDS, MARKETS, factSheetOf, type FactSheet } from "@/lib/factSheet";
 import type { Prompt } from "@/lib/types";
 import type { Database } from "@/lib/database.types";
 import { z } from "zod";
@@ -63,7 +64,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     website: "",
     aliases: "",
     is_client: false,
+    market_country: "",
   });
+  const [facts, setFacts] = useState<FactSheet>(factSheetOf({}));
   const [mw, setMw] = useState<Record<string, number>>({});
   const [ew, setEw] = useState<Record<string, number>>({});
   const [prompts, setPrompts] = useState<Prompt[]>(data.prompts);
@@ -104,7 +107,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       website: brand.website || "",
       aliases: (brand.aliases || []).join(", "),
       is_client: !!brand.is_client,
+      market_country: brand.market_country || "",
     });
+    setFacts(factSheetOf(brand.fact_sheet));
     setMw(metricWeights(brand) as unknown as Record<string, number>);
     const e = engineWeights(brand);
     const eObj: Record<string, number> = {};
@@ -164,6 +169,12 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     if (await updateBrand(upd)) toast("PR profile saved");
   }
 
+  async function saveFactSheet() {
+    const clean: FactSheet = {};
+    for (const f of FACT_FIELDS) clean[f.key] = (facts[f.key] || "").trim();
+    if (await updateBrand({ fact_sheet: clean })) toast("Fact sheet saved");
+  }
+
   async function saveBrandDetails() {
     const upd = {
       name: details.name.trim(),
@@ -171,6 +182,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       website: details.website.trim() || null,
       aliases: parseAliases(details.aliases),
       is_client: details.is_client,
+      market_country: details.market_country || null,
     };
     if (!(await updateBrand(upd))) return;
     await loadBrands();
@@ -575,6 +587,18 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
             placeholder="https://clientsite.com"
             onChange={(e) => setDetails({ ...details, website: e.target.value })}
           />
+          <label>Main market</label>
+          <select
+            value={details.market_country}
+            onChange={(e) => setDetails({ ...details, market_country: e.target.value })}
+          >
+            <option value="">Global / no single country</option>
+            {MARKETS.map(([code, name]) => (
+              <option key={code} value={code}>
+                {name}
+              </option>
+            ))}
+          </select>
           <label>Also known as</label>
           <input
             value={details.aliases}
@@ -597,6 +621,8 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
             The website is the client&#39;s ground-truth domain — used to spot when their
             own site is cited, and given to the AI for context. &quot;Also known as&quot;
             lists other names the brand goes by, so a mention under any of them counts.
+            The main market sets where the AI engines search from (ChatGPT, Claude and
+            Perplexity), so answers match what buyers in that country see.
           </div>
         </div>
         </div>
@@ -635,6 +661,30 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           Strategy shapes the questions you track and powers the ✨ AI guidance in the
           action plan.
         </div>
+      </div>
+        </div>
+        <div id="setup-facts" className="setup-section">
+      <div className="card stack" style={{ marginBottom: 16 }}>
+        <h3>Client fact sheet</h3>
+        <div className="legend-note" style={{ marginTop: 0 }}>
+          The facts the client has confirmed. Every AI suggestion treats this as ground
+          truth, and each monthly check uses it to judge whether what the AI engines say
+          about {brand.name} is accurate — so errors are caught, not guessed.
+        </div>
+        {FACT_FIELDS.map((f) => (
+          <div key={f.key}>
+            <label>{f.label}</label>
+            <textarea
+              rows={f.key === "description" ? 2 : 3}
+              value={facts[f.key] || ""}
+              placeholder={f.hint}
+              onChange={(e) => setFacts({ ...facts, [f.key]: e.target.value })}
+            />
+          </div>
+        ))}
+        <button className="btn sm" onClick={saveFactSheet}>
+          Save fact sheet
+        </button>
       </div>
         </div>
         <div id="setup-competitors" className="setup-section">

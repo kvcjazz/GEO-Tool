@@ -803,8 +803,10 @@ export type Database = {
           audience: string | null
           created_at: string
           engine_weights: Json
+          fact_sheet: Json
           id: string
           is_client: boolean
+          market_country: string | null
           metric_weights: Json
           name: string
           objective: string | null
@@ -826,8 +828,10 @@ export type Database = {
           audience?: string | null
           created_at?: string
           engine_weights?: Json
+          fact_sheet?: Json
           id?: string
           is_client?: boolean
+          market_country?: string | null
           metric_weights?: Json
           name: string
           objective?: string | null
@@ -849,8 +853,10 @@ export type Database = {
           audience?: string | null
           created_at?: string
           engine_weights?: Json
+          fact_sheet?: Json
           id?: string
           is_client?: boolean
+          market_country?: string | null
           metric_weights?: Json
           name?: string
           objective?: string | null

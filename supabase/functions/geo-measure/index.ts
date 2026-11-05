@@ -27,9 +27,19 @@
 //     geo_responses row itself and marks the job done/skipped/failed.
 //   - { engine, prompt, brand, ... }: a direct measurement for a signed-in user
 //     (their access token is checked with Supabase Auth). Nothing is saved.
-import { callModel, CORS, envKey, json, KEY_ENV, parseJson, providerFor } from "../_shared/providers.ts";
+import {
+  callModel,
+  countryCode,
+  CORS,
+  envKey,
+  json,
+  KEY_ENV,
+  parseJson,
+  providerFor,
+} from "../_shared/providers.ts";
 import type { ProviderId } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
+import { factSheetText } from "../_shared/facts.ts";
 import {
   citationDomains,
   citesSite,
@@ -45,13 +55,19 @@ const PROMINENCE = ["Recommended", "Prominent", "Passing"];
 const SENTIMENT = ["Positive", "Neutral", "Negative"];
 const ACCURACY = ["Correct", "Minor error", "Major error"];
 
-type Grade = { prominence: string; sentiment: string | null; accuracy: string | null };
+type Grade = {
+  prominence: string;
+  sentiment: string | null;
+  accuracy: string | null;
+  accuracy_note?: string;
+};
 
 type SampleRun = {
   answer: string;
   citations: string[];
   searched: boolean;
   search_error?: string;
+  country?: string | null;
   model: string;
   mentioned: boolean;
   competitors: string[];
@@ -59,13 +75,18 @@ type SampleRun = {
   prominence: string;
   sentiment: string | null;
   accuracy: string | null;
+  accuracy_note?: string;
 };
 
-function gradePrompt(question: string, answer: string, brand: Named): string {
+function gradePrompt(question: string, answer: string, brand: Named, facts: string): string {
   const aka = (brand.aliases || []).filter(Boolean);
   return (
     "Below is a question a user asked an AI assistant, and the assistant's answer.\n\n" +
     "QUESTION:\n" + question + "\n\nANSWER:\n" + answer + "\n\n" +
+    (facts
+      ? "FACT SHEET for \"" + brand.name + "\", confirmed by the brand's own team. Treat it as " +
+        "ground truth when judging accuracy:\n" + facts + "\n\n"
+      : "") +
     'Assess how the answer presents the brand "' + brand.name + '"' +
     (aka.length ? " (also written as: " + aka.join(", ") + ")" : "") +
     ". Return ONLY a JSON object with these keys:\n" +
@@ -74,8 +95,14 @@ function gradePrompt(question: string, answer: string, brand: Named): string {
     'recommended; "Passing" if it is only named in passing.\n' +
     '- "sentiment": "Positive", "Neutral" or "Negative" — the tone towards the brand.\n' +
     '- "accuracy": "Correct", "Minor error" or "Major error" — whether what the ' +
-    "answer states about the brand is factually right, to the best of your knowledge. " +
-    'Use "Correct" when nothing stated about the brand is wrong.'
+    "answer states about the brand is factually right" +
+    (facts
+      ? ", checked against the fact sheet first and your own knowledge second. A " +
+        "statement that contradicts the fact sheet on what the brand does, offers or " +
+        "where it operates is a Major error; a wrong or out-of-date detail is a Minor error. "
+      : ", to the best of your knowledge. ") +
+    'Use "Correct" when nothing stated about the brand is wrong.' +
+    (facts ? '\n- "accuracy_note": one short sentence naming the error, or "" if Correct.' : "")
   );
 }
 
@@ -90,14 +117,16 @@ async function grade(
   question: string,
   answer: string,
   brand: Named,
+  facts: string,
 ): Promise<Grade> {
-  const out = await callModel(provider, key, gradePrompt(question, answer, brand), 1500);
+  const out = await callModel(provider, key, gradePrompt(question, answer, brand, facts), 1500);
   const g = out.error ? null : parseJson<Record<string, unknown>>(out.text);
   return {
     // A mentioned brand is at least "Passing" even when grading fails.
     prominence: pick(g?.prominence, PROMINENCE) ?? "Passing",
     sentiment: pick(g?.sentiment, SENTIMENT),
     accuracy: pick(g?.accuracy, ACCURACY),
+    accuracy_note: g?.accuracy_note ? String(g.accuracy_note).slice(0, 300) : undefined,
   };
 }
 
@@ -108,6 +137,10 @@ type MeasureInput = {
   website?: string | null;
   competitors: Named[];
   samples: number;
+  /** The buyer's country, passed to the engines' search as their location. */
+  country?: string | null;
+  /** The client fact sheet as text, used to judge accuracy. */
+  facts?: string;
 };
 
 type Outcome = {
@@ -142,19 +175,23 @@ async function measure(input: MeasureInput): Promise<Outcome> {
   // Samples are independent, so they run side by side.
   const settled = await Promise.all(
     Array.from({ length: samples }, async (): Promise<SampleRun | string> => {
-      const out = await callModel(provider, key, question, 4000, { webSearch: true });
+      const out = await callModel(provider, key, question, 4000, {
+        webSearch: true,
+        country: input.country,
+      });
       if (out.error) return out.error;
       if (!out.text.trim()) return out.model + " → empty answer";
       const mentioned = names(out.text, brand);
       const domains = citationDomains(out.citations);
       const g: Grade = mentioned
-        ? await grade(provider, key, question, out.text, brand)
+        ? await grade(provider, key, question, out.text, brand, input.facts || "")
         : { prominence: "Absent", sentiment: null, accuracy: null };
       return {
         answer: out.text,
         citations: out.citations,
         searched: out.searched,
         search_error: out.searchError,
+      country: countryCode(input.country),
         model: out.model,
         mentioned,
         competitors: competitorsNamed(out.text, competitors),
@@ -212,6 +249,9 @@ async function measure(input: MeasureInput): Promise<Outcome> {
       prominence: mode(runs.map((r) => r.prominence)) || (mrate >= 0.5 ? "Passing" : "Absent"),
       sentiment: mode(mentionedRuns.map((r) => r.sentiment)),
       accuracy: mode(mentionedRuns.map((r) => r.accuracy)),
+      // What the engine got wrong about the client, judged against the fact sheet.
+      accuracy_note: mentionedRuns.find((r) => r.accuracy && r.accuracy !== "Correct" && r.accuracy_note)
+        ?.accuracy_note || null,
       cited,
       competitor_mentions: Math.round(
         runs.reduce((a, r) => a + r.competitors.length, 0) / runs.length,
@@ -282,9 +322,13 @@ async function runJob(jobId: string): Promise<Outcome> {
     first<{ text: string }>(`geo_prompts?id=eq.${job.prompt_id}&select=text`),
   ]);
   const brand = run
-    ? await first<{ name: string; aliases: string[] | null; website: string | null }>(
-      `geo_brands?id=eq.${run.brand_id}&select=name,aliases,website`,
-    )
+    ? await first<{
+      name: string;
+      aliases: string[] | null;
+      website: string | null;
+      market_country: string | null;
+      fact_sheet: unknown;
+    }>(`geo_brands?id=eq.${run.brand_id}&select=name,aliases,website,market_country,fact_sheet`)
     : null;
   if (!prompt || !brand || !run) {
     await finish(job, "failed", "run, prompt or brand no longer exists");
@@ -300,6 +344,8 @@ async function runJob(jobId: string): Promise<Outcome> {
     website: brand.website,
     competitors: comps.filter((c) => c.name?.trim()),
     samples: job.samples,
+    country: brand.market_country,
+    facts: factSheetText(brand.fact_sheet),
   });
 
   if (!out.ok || !out.result) {
@@ -335,6 +381,7 @@ async function runJob(jobId: string): Promise<Outcome> {
     model: o.model || null,
     web_search: o.web_search ?? null,
     raw: o.runs,
+    ...(o.accuracy_note ? { notes: "Accuracy: " + o.accuracy_note } : {}),
   };
   // One row per prompt × engine in a run: overwrite a capture-grid row if any.
   const existing = await first<{ id: string }>(
@@ -369,6 +416,8 @@ Deno.serve(async (req: Request) => {
     /** Optional other names per competitor, keyed by competitor name. */
     competitor_aliases?: Record<string, string[] | null>;
     samples?: number;
+    country?: string | null;
+    fact_sheet?: unknown;
   };
 
   if (body.job_id) return json(await runJob(String(body.job_id)));
@@ -386,6 +435,8 @@ Deno.serve(async (req: Request) => {
         .filter(Boolean)
         .map((name) => ({ name, aliases: body.competitor_aliases?.[name] || [] })),
       samples: Number(body.samples) || 3,
+      country: body.country,
+      facts: factSheetText(body.fact_sheet),
     }),
   );
 });

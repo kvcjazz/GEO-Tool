@@ -25,6 +25,7 @@ const STAGES = ["Problem-aware", "Exploring solutions", "Shortlisting", "Decidin
 type Brief = {
   client?: Record<string, unknown> & { name?: string };
   competitors?: { name: string; aliases?: string[]; mentions_last_check?: number | null }[];
+  fact_sheet?: string;
   client_notes?: string;
   questions?: { text: string; type?: string; active?: boolean; names_client?: boolean }[];
   latest_check?: unknown;
@@ -75,10 +76,12 @@ function briefOf(b: Body): Brief {
 
 /** The brief as labelled sections; client notes kept as prose. */
 function renderBrief(br: Brief): string {
-  const { client_notes, ...rest } = br;
+  const { client_notes, fact_sheet, ...rest } = br;
   return (
     "CLIENT BRIEF (JSON — empty or null fields were not filled in by the team):\n" +
     JSON.stringify(rest, null, 1) +
+    "\n\nFACT SHEET — confirmed by the team; treat as ground truth and never contradict it:\n" +
+    (fact_sheet ? String(fact_sheet).slice(0, 6000) : "(not filled in yet)") +
     "\n\nCLIENT NOTES — strategy-call transcripts, documents and the team's steer. " +
     "Lines marked [Team guidance …] are the team's explicit instructions: follow them.\n" +
     (client_notes ? String(client_notes).slice(0, 14000) : "(none yet)")

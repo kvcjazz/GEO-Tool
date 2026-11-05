@@ -1,4 +1,5 @@
 import type { Brand, Competitor, ContextItem, MediaTarget, Prompt } from "./types";
+import { FACT_FIELDS, factSheetFilled } from "./factSheet";
 
 // The Client setup checklist: what a client needs before the monthly check
 // gives trustworthy numbers. Each step anchors to its section on the page.
@@ -41,9 +42,13 @@ export function setupSteps(
     {
       id: "brand",
       title: "Brand & website",
-      detail: brand.website
-        ? `${brand.website} is set, so the tool can tell when AI cites the client's own site.`
-        : "Add the website so the tool can tell when AI cites the client's own site.",
+      detail:
+        (brand.website
+          ? `${brand.website} is set, so the tool can tell when AI cites the client's own site.`
+          : "Add the website so the tool can tell when AI cites the client's own site.") +
+        (brand.market_country
+          ? ` Engines search from ${brand.market_country}.`
+          : " No main market set, so engines search from their default (usually the US)."),
       status: brand.website ? "done" : "attention",
     },
     {
@@ -51,6 +56,17 @@ export function setupSteps(
       title: "Strategy & positioning",
       detail: "Objective, audience, positioning and themes. These steer every AI suggestion.",
       status: brand.objective && brand.positioning ? "done" : "review",
+    },
+    {
+      id: "facts",
+      title: "Client fact sheet",
+      detail: (() => {
+        const n = factSheetFilled(brand.fact_sheet);
+        return n
+          ? `${n} of ${FACT_FIELDS.length} sections filled. Used to check whether AI answers about the client are accurate.`
+          : "Empty — add what the company does, its offerings and key facts so the monthly check can catch AI getting them wrong.";
+      })(),
+      status: factSheetFilled(brand.fact_sheet) >= 3 ? "done" : factSheetFilled(brand.fact_sheet) ? "review" : "attention",
     },
     {
       id: "competitors",
