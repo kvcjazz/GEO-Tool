@@ -13,6 +13,8 @@ import {
 import { computeAll } from "@/lib/scoring";
 import { r1 } from "@/lib/format";
 import { namesBrand } from "@/lib/questions";
+import { seoOriginText } from "@/lib/searchDemand";
+import { SeoChip } from "@/components/ui";
 import type { Prompt, Response } from "@/lib/types";
 
 function Dd({
@@ -431,7 +433,19 @@ export default function CaptureView() {
                 return (
                   <Fragment key={g.prompt.id}>
                     <tr className="main-row">
-                      <td style={{ fontWeight: 600 }}>{g.prompt.text}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        {g.prompt.text}
+                        {g.prompt.seo_seed && (
+                          <div
+                            className="seo-line"
+                            style={{ fontWeight: 400 }}
+                            title={seoOriginText(g.prompt)}
+                          >
+                            <SeoChip label="SEO-informed" /> chosen from Google search “
+                            {g.prompt.seo_seed}”
+                          </div>
+                        )}
+                      </td>
                       <td className="muted">{g.prompt.ptype}</td>
                       <td>{namedTag(g)}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>

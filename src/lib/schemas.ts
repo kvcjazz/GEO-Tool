@@ -67,11 +67,19 @@ export const SuggestPromptSchema = z.object({
   impact: z.union([z.number(), z.string()]).nullish(),
   reason: z.string().nullish(),
   lever: z.string().nullish(),
+  // SEO input — only set for questions drafted from imported search terms.
+  seo_seed: z.string().nullish(),
+  seo_demand: z.number().nullish(),
+  seo_demand_kind: z.enum(["volume", "impressions"]).nullish(),
 });
 
 export const AdviseSuggestSchema = z.object({
   prompts: z.array(SuggestPromptSchema).nullish(),
   note: z.string().nullish(),
+  /** "search" when every suggestion was drafted from imported search terms. */
+  focus: z.string().nullish(),
+  /** Suggestions dropped because their search term wasn't in the imported list. */
+  unmatched: z.number().nullish(),
   source: z.string().nullish(),
   model: z.string().nullish(),
   error: z.string().nullish(),

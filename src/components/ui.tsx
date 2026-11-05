@@ -300,3 +300,15 @@ export function DateFilter() {
     </div>
   );
 }
+
+/**
+ * Marks anything that comes from search data (SEO input) so it is never read
+ * as an AI-visibility (GEO) result. Same teal chip everywhere it appears.
+ */
+export function SeoChip({ title, label = "SEO" }: { title?: string; label?: string }) {
+  return (
+    <span className="tag-seo" title={title}>
+      🔍 {label}
+    </span>
+  );
+}

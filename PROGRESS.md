@@ -194,3 +194,33 @@ reused untouched.
   automatically; the team sees "Client setup has changed" with a rewrite link.
 - Not yet clicked through signed in (no sign-in from the build container).
   `geo-advise` v14 boots and still refuses unsigned calls (checked via pg_net).
+
+## 2026-11-05 — Search demand (SEO input), phase 1
+
+Search data now helps choose which questions to ask the AI engines. SEO and GEO
+are kept visibly apart: everything from search data is teal and labelled
+"🔍 SEO"; GEO results (answers, scores) are unchanged and never use it.
+
+- **DB (applied live, migration `search_demand`):** new `geo_search_terms`
+  table (per-client RLS, cascades on client delete) and `seo_seed`,
+  `seo_demand`, `seo_demand_kind` on `geo_prompts`. SQL in
+  `supabase/migrations/20261105220000_search_demand.sql`.
+- **Client setup → Search demand:** import a Search Console *Queries.csv*,
+  Semrush/Ahrefs/Keyword Planner export (UTF-16 handled) or a pasted list
+  (`src/lib/searchDemand.ts`). Re-imports merge figures rather than blanking
+  them. Side-by-side "SEO vs GEO" explainer; table shows Google rank (labelled
+  as Google, so it's never read as the AI "Position" metric) and which tracked
+  question each term became. Optional checklist step.
+- **Suggest from search demand:** `geo-advise` v15 takes
+  `focus: "search"` + `brief.search_demand`. Every suggestion must name the
+  `seo_seed` it came from; the function drops any whose seed isn't a real
+  imported term, so the SEO label can't point at an invented search. The
+  strategy-led "Suggest questions" is unchanged.
+- **Labels:** SEO-drafted questions show their search term in Client setup and
+  an "SEO-informed" chip in Answers. Scoring is untouched.
+- Verified: build + typecheck, parser cases (GSC, Keyword Planner, Semrush,
+  pasted), edge-function typecheck + shared tests (run under Node; Deno not
+  available in the container), UI screenshots against mocked data, deployed
+  function boots. Not yet run end-to-end with a signed-in user and real AI call.
+- Branch note: built on `claude/cool-euler-mymkvt` (main + PR #6) because PR #6
+  — whose `summary` mode is live — was merged into that branch, not `main`.

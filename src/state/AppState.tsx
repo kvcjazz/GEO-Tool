@@ -38,6 +38,7 @@ import type {
   Run,
   SourceKind,
   TargetTitle,
+  SearchTerm,
 } from "@/lib/types";
 
 export type BrandData = {
@@ -52,6 +53,8 @@ export type BrandData = {
   sourceKinds: Record<string, SourceKind>;
   /** Titles to target: the senior-PR review of cited sites, plus the team's calls. */
   targets: TargetTitle[];
+  /** SEO input: imported Google search terms. Helps choose questions; never scored. */
+  searchTerms: SearchTerm[];
   sov: { player: string; mentions: number }[];
   opps: Opportunity[];
   pr: PrActivity[];
@@ -72,6 +75,7 @@ const EMPTY: BrandData = {
   history: {},
   sourceKinds: {},
   targets: [],
+  searchTerms: [],
   sov: [],
   opps: [],
   pr: [],
@@ -260,6 +264,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         news,
         kinds,
         targets,
+        searchTerms,
       ] = await Promise.all([
         sb.from("geo_competitors").select("*").eq("brand_id", id),
         sb.from("geo_prompts").select("*").eq("brand_id", id).order("sort"),
@@ -294,6 +299,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           .limit(20),
         sb.from("geo_source_kinds").select("*").eq("brand_id", id),
         sb.from("geo_target_titles").select("*").eq("brand_id", id),
+        sb.from("geo_search_terms").select("*").eq("brand_id", id).limit(5000),
       ]);
 
       const allNews = (news.data || []) as NewsItem[];
@@ -351,6 +357,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           ((kinds.data || []) as SourceKind[]).map((k) => [k.domain, k]),
         ),
         targets: (targets.data || []) as TargetTitle[],
+        searchTerms: (searchTerms.data || []) as SearchTerm[],
         sov,
         opps: (opps.data || []) as Opportunity[],
         pr: (pr.data || []) as PrActivity[],

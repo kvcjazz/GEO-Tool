@@ -1287,6 +1287,9 @@ export type Database = {
           code: string
           id: string
           ptype: string
+          seo_demand: number | null
+          seo_demand_kind: string | null
+          seo_seed: string | null
           sort: number
           text: string
         }
@@ -1296,6 +1299,9 @@ export type Database = {
           code: string
           id?: string
           ptype: string
+          seo_demand?: number | null
+          seo_demand_kind?: string | null
+          seo_seed?: string | null
           sort?: number
           text: string
         }
@@ -1305,6 +1311,9 @@ export type Database = {
           code?: string
           id?: string
           ptype?: string
+          seo_demand?: number | null
+          seo_demand_kind?: string | null
+          seo_seed?: string | null
           sort?: number
           text?: string
         }
@@ -1485,6 +1494,50 @@ export type Database = {
             columns: ["run_id"]
             isOneToOne: false
             referencedRelation: "geo_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      geo_search_terms: {
+        Row: {
+          brand_id: string
+          clicks: number | null
+          id: string
+          imported_at: string
+          impressions: number | null
+          position: number | null
+          query: string
+          source: string | null
+          volume: number | null
+        }
+        Insert: {
+          brand_id: string
+          clicks?: number | null
+          id?: string
+          imported_at?: string
+          impressions?: number | null
+          position?: number | null
+          query: string
+          source?: string | null
+          volume?: number | null
+        }
+        Update: {
+          brand_id?: string
+          clicks?: number | null
+          id?: string
+          imported_at?: string
+          impressions?: number | null
+          position?: number | null
+          query?: string
+          source?: string | null
+          volume?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "geo_search_terms_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "geo_brands"
             referencedColumns: ["id"]
           },
         ]

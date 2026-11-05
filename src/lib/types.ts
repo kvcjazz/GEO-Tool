@@ -19,6 +19,8 @@ export type MeasureJob = Tables["geo_measure_jobs"]["Row"];
 export type SourceKind = Tables["geo_source_kinds"]["Row"];
 export type OutletTier = Tables["geo_outlet_tiers"]["Row"];
 export type TargetTitle = Tables["geo_target_titles"]["Row"];
+/** SEO input: a Google search term imported for a client. Never part of the GEO score. */
+export type SearchTerm = Tables["geo_search_terms"]["Row"];
 
 export type EngineStatus = Record<string, boolean>;
 

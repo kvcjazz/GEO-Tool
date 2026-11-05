@@ -8,6 +8,12 @@
 //     the client is missing, which competitors show up, which sites the
 //     engines cite) and the team's strategy-call notes.
 //
+//   { mode: "suggest", focus: "search", brief (with brief.search_demand), count? }
+//     Same strategist, but every question is drafted from a Google search term
+//     the team imported (SEO input). Each suggestion carries `seo_seed`, checked
+//     against the imported list, so the app can label it as SEO-informed. The
+//     search data only helps choose questions; it is never treated as a GEO result.
+//
 //   { opportunity, gap, playbook, steps, brief? }   (no mode = "tailor")
 //     Turns a generic playbook into 4–6 client-specific next steps.
 //
@@ -24,6 +30,12 @@
 // template questions, and "tailor" returns its template with `error` set.
 import { callAnalyst, CORS, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
+import {
+  cleanSearchDemand,
+  matchSeed,
+  renderSearchDemand,
+  type SearchDemandTerm,
+} from "../_shared/searchdemand.ts";
 
 const PTYPES = ["Category", "Comparison", "Brand/Entity", "Problem-led", "Buying-intent"];
 const STAGES = ["Problem-aware", "Exploring solutions", "Shortlisting", "Deciding"];
@@ -36,10 +48,14 @@ type Brief = {
   questions?: { text: string; type?: string; active?: boolean; names_client?: boolean }[];
   latest_check?: unknown;
   recent_pr?: unknown[];
+  /** SEO input, only sent with focus "search". */
+  search_demand?: unknown;
 };
 
 type Body = {
   mode?: string;
+  /** "search": draft every suggestion from brief.search_demand. */
+  focus?: string;
   brief?: Brief;
   count?: number;
   // Legacy flat fields.
@@ -82,7 +98,8 @@ function briefOf(b: Body): Brief {
 
 /** The brief as labelled sections; client notes kept as prose. */
 function renderBrief(br: Brief): string {
-  const { client_notes, fact_sheet, ...rest } = br;
+  // search_demand is rendered as its own, clearly labelled SEO section.
+  const { client_notes, fact_sheet, search_demand: _seo, ...rest } = br;
   return (
     "CLIENT BRIEF (JSON — empty or null fields were not filled in by the team):\n" +
     JSON.stringify(rest, null, 1) +
@@ -100,12 +117,32 @@ const EXPERT =
   "assistants (ChatGPT, Google Gemini / AI Overviews, Perplexity, Copilot, Claude, " +
   "Grok) to show a client how visible they are and where PR can move that.";
 
-function suggestPrompt(br: Brief, count: number): string {
+function suggestPrompt(br: Brief, count: number, search: SearchDemandTerm[] | null): string {
   const name = br.client?.name || "the client";
+  const fromSearch = !!search?.length;
   return (
     EXPERT + "\n\n" + renderBrief(br) + "\n\n" +
-    `TASK: Propose ${count} NEW questions to track for ${name}.\n\n` +
-    "How an expert chooses them:\n" +
+    (fromSearch
+      ? renderSearchDemand(search!) + "\n\n" +
+        `TASK: Propose ${count} NEW questions to track for ${name}, EACH ONE drafted from a ` +
+        "search term in SEARCH DEMAND. The search data tells you which needs people really " +
+        "have and how many have them; your job is to turn those needs into the questions the " +
+        "same people would ask an AI assistant.\n\n" +
+        "Turning search demand into AI questions:\n" +
+        "a. Pick the search intents that matter most to this client's objectives, weighing " +
+        "demand. Skip navigational or irrelevant terms (logins, jobs/careers, addresses, the " +
+        "client's name on its own, unrelated meanings of a word) and terms marked already_tracked.\n" +
+        "b. Group near-duplicate terms into one intent and use the highest-demand term of the " +
+        "group as seo_seed. One question per intent.\n" +
+        "c. Never paste the search term as the question. Expand the short search into the " +
+        "situation it implies (who is searching, why, constraints).\n" +
+        "d. Do not over-weight a few broad head terms: specific, question-style and buying-intent " +
+        "terms often matter more for AI answers.\n" +
+        "e. A Google ranking (google_position) is NOT a measure of AI visibility; do not claim " +
+        "the client is or isn't visible in AI answers because of it.\n\n" +
+        "Then apply the usual rules:\n"
+      : `TASK: Propose ${count} NEW questions to track for ${name}.\n\n` +
+        "How an expert chooses them:\n") +
     "1. Write each question exactly as a real buyer would type or say it to an AI " +
     "assistant: natural, conversational, usually 8–25 words, often with their own " +
     "situation in it (role, company size, constraint, location). Not SEO keyword strings.\n" +
@@ -142,8 +179,13 @@ function suggestPrompt(br: Brief, count: number): string {
     '"persona":"who asks it, 2–5 words",' +
     '"names_client":true or false,' +
     '"impact":1-5,' +
-    '"reason":"one sentence on why it matters, citing the specific strategy, client ' +
-    'note or result it comes from",' +
+    (fromSearch
+      ? '"seo_seed":"the search term this question was drafted from, copied exactly from ' +
+        'SEARCH DEMAND",' +
+        '"reason":"one sentence on why this search need matters for the client\'s visibility ' +
+        'in AI answers, citing the strategy or result it ties to",'
+      : '"reason":"one sentence on why it matters, citing the specific strategy, client ' +
+        'note or result it comes from",') +
     '"lever":"one short sentence: the PR or content move most likely to get the client ' +
     'into this answer (e.g. a named outlet type, a ranking/directory, owned content, ' +
     'a spokesperson angle)"}]}'
@@ -163,13 +205,21 @@ type Suggestion = {
   impact: number;
   reason: string;
   lever: string | null;
+  /** SEO input: the imported search term behind the question, if any. */
+  seo_seed: string | null;
+  seo_demand: number | null;
+  seo_demand_kind: "volume" | "impressions" | null;
 };
 
 async function suggest(body: Body): Promise<Response> {
   const br = briefOf(body);
   if (!br.client?.name) return json({ error: "No client given." }, 400);
   const count = Math.max(4, Math.min(20, Math.round(Number(body.count) || 12)));
-  const out = await callAnalyst(suggestPrompt(br, count), 8000);
+  const search = body.focus === "search" ? cleanSearchDemand(br.search_demand) : null;
+  if (search && !search.length) {
+    return json({ error: "No search terms to work from — import search data first." }, 400);
+  }
+  const out = await callAnalyst(suggestPrompt(br, count, search), 8000);
   if (out.error) return json({ error: "The AI model call failed: " + out.error }, 502);
 
   const parsed = parseJson<{ note?: string; prompts?: Record<string, unknown>[] }>(out.text);
@@ -181,9 +231,17 @@ async function suggest(body: Body): Promise<Response> {
   }
   const seen = new Set((br.questions || []).map((q) => norm(q.text)));
   const prompts: Suggestion[] = [];
+  let unmatched = 0;
   for (const p of parsed.prompts) {
     const text = String(p.text || "").trim();
     if (!text || seen.has(norm(text))) continue;
+    // In search mode, a question is only kept when its seed is a real imported
+    // term — the SEO label must never point at a term nobody searched.
+    const term = search ? matchSeed(p.seo_seed, search) : null;
+    if (search && !term) {
+      unmatched++;
+      continue;
+    }
     seen.add(norm(text));
     const type = String(p.type || p.ptype || "");
     const stage = String(p.stage || "");
@@ -196,10 +254,27 @@ async function suggest(body: Body): Promise<Response> {
       impact: Math.max(1, Math.min(5, Math.round(Number(p.impact) || 3))),
       reason: String(p.reason || ""),
       lever: p.lever ? String(p.lever) : null,
+      seo_seed: term ? term.query : null,
+      seo_demand: term ? term.demand : null,
+      seo_demand_kind: term ? term.demand_kind : null,
     });
   }
+  if (search && !prompts.length) {
+    return json(
+      { error: "None of the AI's questions could be tied back to an imported search term. Try again." },
+      502,
+    );
+  }
   prompts.sort((a, b) => b.impact - a.impact);
-  return json({ prompts, note: parsed.note || null, source: "ai", model: out.model, fellBackFrom: out.fellBackFrom });
+  return json({
+    prompts,
+    note: parsed.note || null,
+    focus: search ? "search" : "strategy",
+    unmatched: search ? unmatched : undefined,
+    source: "ai",
+    model: out.model,
+    fellBackFrom: out.fellBackFrom,
+  });
 }
 
 function tailorTemplate(b: Body, br: Brief): string {
