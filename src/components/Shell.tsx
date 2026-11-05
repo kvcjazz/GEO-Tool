@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { AREAS, ENGINES } from "@/lib/constants";
 import type { Area } from "@/lib/constants";
@@ -14,10 +15,16 @@ import ListeningView from "@/views/ListeningView";
 import SettingsView from "@/views/SettingsView";
 import TargetsView from "@/views/TargetsView";
 import ReportView from "@/views/ReportView";
+import ClientsView from "@/views/ClientsView";
+import ClientSwitcher, { ClientBadge } from "@/components/ClientSwitcher";
+import { computeAll } from "@/lib/scoring";
+import { r1 } from "@/lib/format";
 
 /** What renders for each area (and tab, where an area has tabs). */
 function AreaBody({ area, tab }: { area: string; tab: string }) {
   switch (area) {
+    case "clients":
+      return <ClientsView />;
     case "answers":
       return tab === "sources" ? <SourcesView /> : tab === "mentions" ? <ListeningView /> : <CaptureView />;
     case "plan":
@@ -52,12 +59,10 @@ export default function Shell() {
     tab,
     setView,
     setMode,
-    brands,
     brand,
     data,
     engines,
     jobs,
-    selectBrand,
     startSnapshot,
     remeasure,
     signOut,
@@ -66,6 +71,23 @@ export default function Shell() {
   } = useAppState();
 
   const client = mode === "client";
+  const [switching, setSwitching] = useState(false);
+
+  // ⌘K / Ctrl+K opens the client switcher (team view only: presenting to a
+  // client must never show the others).
+  useEffect(() => {
+    if (client) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSwitching((s) => !s);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [client]);
+  const score =
+    brand && data.responses.length ? r1(computeAll(brand, data.responses).blended.geo) : null;
   const area = AREAS.find((a) => a.id === view) || AREAS[0];
   const visible = AREAS.filter((a) => !client || a.client);
 
@@ -128,6 +150,32 @@ export default function Shell() {
           Luminous <span>GEO</span>
           <small>AI VISIBILITY</small>
         </div>
+        {!client && (
+          <div className="nav-top">{AREAS.filter((a) => a.group === "home").map(navButton)}</div>
+        )}
+        {brand && (
+          <div className="client-block">
+            <ClientBadge brand={brand} size={38} />
+            <div className="cb-text">
+              <div className="cb-label">{client ? "Presenting" : "Working on"}</div>
+              <div className="cb-name" title={brand.name}>
+                {brand.name}
+              </div>
+              {score != null && <div className="cb-score">GEO score {score}</div>}
+            </div>
+            {!client && (
+              <button
+                type="button"
+                className="cb-switch"
+                onClick={() => setSwitching(true)}
+                title="Switch client (⌘K / Ctrl+K)"
+              >
+                <span>Switch client</span>
+                <kbd>⌘K</kbd>
+              </button>
+            )}
+          </div>
+        )}
         <nav className="nav" aria-label="Main">
           <div className="nav-group">{client ? "Client report" : "Monthly cycle"}</div>
           {visible.filter((a) => a.group === "cycle").map(navButton)}
@@ -153,19 +201,26 @@ export default function Shell() {
       <div className="main">
         <div className="topbar">
           <div className="context">
-            <label className="ctx-client">
-              Client
-              <select
-                value={brand?.id || ""}
-                onChange={(e) => selectBrand(e.target.value)}
-              >
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {brand &&
+              (client ? (
+                <span className="ctx-client">
+                  <ClientBadge brand={brand} size={22} />
+                  <b>{brand.name}</b>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="ctx-client"
+                  onClick={() => setSwitching(true)}
+                  title="Switch client (⌘K / Ctrl+K)"
+                >
+                  <ClientBadge brand={brand} size={22} />
+                  <b>{brand.name}</b>
+                  <span className="muted" aria-hidden="true">
+                    ▾
+                  </span>
+                </button>
+              ))}
             {run ? (
               <span className="ctx-run">
                 <b>{run.label.replace(" (Current)", "")} check</b> · {formatDate(run.run_date)}
@@ -254,6 +309,7 @@ export default function Shell() {
           )}
         </div>
       </div>
+      {switching && !client && <ClientSwitcher onClose={() => setSwitching(false)} />}
       <div className={`toast${toastShow ? " show" : ""}`}>{toastMsg}</div>
     </div>
   );

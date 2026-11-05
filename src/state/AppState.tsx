@@ -15,6 +15,7 @@ import { callFn } from "@/lib/callFn";
 import { ClassifySourcesSchema, EngineStatusSchema } from "@/lib/schemas";
 import { gapSources } from "@/lib/sources";
 import { AREAS, CLIENT_AREAS, LEGACY_VIEWS, measuredOnly } from "@/lib/constants";
+import { clientSlug, findClient, recentClients, rememberClient } from "@/lib/clientIdentity";
 import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
 import type { Scorable } from "@/lib/scoring";
@@ -182,6 +183,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [toastMsg, setToastMsg] = useState("");
   const [toastShow, setToastShow] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The ?client= value the app was opened with (read once, before we rewrite it).
+  const initialClientParam = useRef<string | null>(searchParams.get("client"));
 
   // Keep the latest selected brand id for reload() without re-creating callbacks.
   const brandIdRef = useRef<string | null>(null);
@@ -367,7 +371,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     if (active.length) {
       const currentId = brandIdRef.current;
       const keep = currentId && active.some((b) => b.id === currentId);
-      await selectBrand(keep ? currentId! : active[0].id);
+      // First load: the client named in the address, else the last one used here.
+      const fromUrl = findClient(active, initialClientParam.current);
+      const recent = recentClients().find((id) => active.some((b) => b.id === id));
+      await selectBrand(keep ? currentId! : fromUrl?.id || recent || active[0].id);
     } else {
       setBrand(null);
       setData(EMPTY);
@@ -647,6 +654,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       if (session) setUserEmail(session.user.email || "");
       await loadEngines();
       await loadBrands();
+      // Team view opens on All clients unless a link named the client.
+      if (!cancelled && !initialClientParam.current && mode === "team") setViewState("clients");
       if (!cancelled) setReady(true);
     })();
     return () => {
@@ -654,6 +663,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The address bar and tab title always name the client being worked on, so
+  // links and bookmarks reopen it and browser tabs can be told apart.
+  useEffect(() => {
+    if (!brand) return;
+    rememberClient(brand.id);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("client", clientSlug(brand.name) || brand.id);
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch {
+      // Not in a browser.
+    }
+    document.title = `${brand.name} · Luminous GEO`;
+  }, [brand]);
 
   const value: Ctx = {
     ready,

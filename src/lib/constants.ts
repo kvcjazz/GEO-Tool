@@ -97,7 +97,15 @@ export const METRIC_LABELS: Record<keyof MetricWeights, string> = {
 // prove impact — plus Setup and Admin. Each area says what question it answers
 // and what to do there, so nobody has to guess what a tab is for.
 
-export type AreaId = "overview" | "answers" | "plan" | "coverage" | "report" | "setup" | "admin";
+export type AreaId =
+  | "clients"
+  | "overview"
+  | "answers"
+  | "plan"
+  | "coverage"
+  | "report"
+  | "setup"
+  | "admin";
 
 /** The main button in an area's page header. */
 export type AreaAction = "snapshot" | "remeasure" | "logPlacement";
@@ -109,7 +117,7 @@ export type Area = {
   clientLabel?: string;
   /** One line under the label in the sidebar. */
   desc: string;
-  group: "cycle" | "setup";
+  group: "home" | "cycle" | "setup";
   /** Shown in client (presentation) view. */
   client: boolean;
   /** What the page answers. */
@@ -122,6 +130,16 @@ export type Area = {
 };
 
 export const AREAS: Area[] = [
+  {
+    id: "clients",
+    label: "All clients",
+    desc: "Every client at a glance",
+    group: "home",
+    // Never shown when presenting to a client: it lists other clients.
+    client: false,
+    question: "How is each client doing, and which ones need attention?",
+    todo: "Open the client you want to work on. Flags show what needs doing.",
+  },
   {
     id: "overview",
     label: "Overview",
