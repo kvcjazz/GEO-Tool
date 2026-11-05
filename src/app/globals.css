@@ -1215,3 +1215,82 @@ button.ctx-client:hover {
   font-size: 11px;
   border-radius: 6px;
 }
+
+/* ---------- strategy summary (Overview) ---------- */
+.strategy-banner .sb-status {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.strategy-banner .sb-points {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--navy);
+}
+.strategy-banner .sb-points li + li {
+  margin-top: 3px;
+}
+.strategy-banner .sb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.strategy-banner .sb-actions > span {
+  flex: 1 1 auto;
+}
+.strategy-banner .sb-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--blue);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.strategy-banner .sb-link:hover {
+  text-decoration: underline;
+}
+.strategy-banner .sb-warn {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6e4a0c;
+  background: #fdf3df;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+/* ---------- chart explainers ---------- */
+.explainer {
+  margin-top: 12px;
+  border-top: 1px solid #eef1f7;
+  padding-top: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.explainer .ex-h {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin: 0 0 3px;
+}
+.explainer p {
+  margin: 0 0 8px;
+}
+.explainer ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.explainer li + li {
+  margin-top: 4px;
+}

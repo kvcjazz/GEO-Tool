@@ -1,4 +1,4 @@
-// AI strategist for the GEO tool. Two modes:
+// AI strategist for the GEO tool. Three modes:
 //
 //   { mode: "suggest", brief, count? }
 //     Proposes new questions to track for a client, the way a senior GEO + PR
@@ -10,6 +10,12 @@
 //
 //   { opportunity, gap, playbook, steps, brief? }   (no mode = "tailor")
 //     Turns a generic playbook into 4–6 client-specific next steps.
+//
+//   { mode: "summary", brief }
+//     Condenses the strategy and PR profile from Client setup into the short,
+//     client-facing visibility-strategy summary shown on the Overview: a
+//     headline plus 2–4 bullets. Uses only those fields — not the client notes,
+//     which can hold internal remarks that must never reach a client screen.
 //
 // `brief` is built by the app (src/lib/adviseBrief.ts). Older callers that send
 // flat fields (brand, sector, objective, …) still work.
@@ -241,9 +247,76 @@ async function tailor(body: Body): Promise<Response> {
   return json({ guidance: out.text.trim(), source: "ai", model: out.model });
 }
 
+// Client setup fields the summary is written from. PR expectations, budget and
+// client notes are left out on purpose: they are internal.
+const SUMMARY_FIELDS: [string, string][] = [
+  ["name", "Client"],
+  ["sector", "Sector"],
+  ["market", "Main market / region"],
+  ["objective", "Visibility objective"],
+  ["audience", "Target audience"],
+  ["positioning", "Desired positioning"],
+  ["themes", "Priority themes"],
+  ["buyer_persona", "Buyer persona"],
+  ["stage", "Buyer journey stage to focus on"],
+  ["pr_objectives", "PR objectives"],
+  ["newsworthy", "What makes them newsworthy"],
+];
+
+function summaryPrompt(br: Brief): string {
+  const c = br.client || {};
+  const lines = SUMMARY_FIELDS
+    .map(([k, label]) => [label, String(c[k] ?? "").trim()])
+    .filter(([, v]) => v)
+    .map(([label, v]) => `${label}: ${v.slice(0, 2000)}`);
+  return (
+    EXPERT + "\n\n" +
+    "CLIENT SETUP — the visibility strategy and PR profile the team entered:\n" +
+    lines.join("\n") + "\n\n" +
+    `TASK: Summarise this into the short visibility strategy shown at the top of ` +
+    `${c.name || "the client"}'s GEO dashboard. Both the agency team and the client ` +
+    "read it, so it must say in plain English what we are trying to achieve in AI " +
+    "answers, for whom, and how.\n\n" +
+    "Rules:\n" +
+    "- A headline of at most 20 words: the goal, stated as an outcome (e.g. 'Be the " +
+    "agency AI assistants recommend when UK fintechs look for PR support').\n" +
+    "- Then 2 to 4 bullets of at most 18 words each, covering who we want to reach, the " +
+    "position and themes to own, and how PR gets there. Skip any of these the setup " +
+    "doesn't cover.\n" +
+    "- Use only what is written above. Do not invent facts, numbers, outlets or claims.\n" +
+    "- Condense and rephrase; never copy long passages. No marketing fluff, no jargon " +
+    "(explain 'GEO' as visibility in AI answers if it is needed at all).\n" +
+    "- Write as the agency describing the plan ('we', the client by name). Use the " +
+    "spelling of the client's market (British English unless the market says otherwise).\n\n" +
+    'Return ONLY a JSON object, no prose, no code fences: {"headline":"…","points":["…","…"]}'
+  );
+}
+
+async function summary(body: Body): Promise<Response> {
+  const br = briefOf(body);
+  if (!br.client?.name) return json({ error: "No client given." }, 400);
+  const c = br.client;
+  const filled = SUMMARY_FIELDS.some(([k]) => k !== "name" && String(c[k] ?? "").trim());
+  if (!filled) return json({ error: "No strategy entered in Client setup yet." }, 400);
+  const out = await callAnalyst(summaryPrompt(br), 1500);
+  if (out.error) return json({ error: "The AI model call failed: " + out.error }, 502);
+  const parsed = parseJson<{ headline?: unknown; points?: unknown }>(out.text);
+  const headline = String(parsed?.headline ?? "").trim();
+  if (!headline) {
+    return json({ error: "The AI reply could not be read. Try again." }, 502);
+  }
+  const points = (Array.isArray(parsed?.points) ? parsed!.points : [])
+    .map((p) => String(p ?? "").trim().replace(/^[-•*]\s*/, ""))
+    .filter(Boolean)
+    .slice(0, 4);
+  return json({ headline, points, source: "ai", model: out.model, fellBackFrom: out.fellBackFrom });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (!(await signedIn(req))) return json({ error: "Sign-in required." }, 401);
   const body = (await req.json().catch(() => ({}))) as Body;
-  return body.mode === "suggest" ? suggest(body) : tailor(body);
+  if (body.mode === "suggest") return suggest(body);
+  if (body.mode === "summary") return summary(body);
+  return tailor(body);
 });

@@ -85,6 +85,13 @@ export const AdviseTailorSchema = z.object({
 });
 export type AdviseTailorResponse = z.infer<typeof AdviseTailorSchema>;
 
+export const AdviseSummarySchema = z.object({
+  headline: z.string().nullish(),
+  points: z.array(z.string()).nullish(),
+  source: z.string().nullish(),
+  error: z.string().nullish(),
+});
+
 // geo-users (account administration)
 export const AdminUserSchema = z.object({
   id: z.string(),

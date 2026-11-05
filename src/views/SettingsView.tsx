@@ -684,7 +684,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         </button>
         <div className="legend-note">
           Strategy shapes the questions you track and powers the ✨ AI guidance in the
-          action plan.
+          action plan. The Overview shows a short AI summary of this strategy and the PR
+          profile, rewritten whenever they change here. You can edit that summary on the
+          Overview; an edited summary is never overwritten without asking.
         </div>
       </div>
         </div>

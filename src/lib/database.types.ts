@@ -819,6 +819,9 @@ export type Database = {
           pr_region: string | null
           pr_research_budget: boolean
           sector: string | null
+          strategy_summary: string | null
+          strategy_summary_edited: boolean
+          strategy_summary_source: string | null
           themes: string | null
           website: string | null
         }
@@ -844,6 +847,9 @@ export type Database = {
           pr_region?: string | null
           pr_research_budget?: boolean
           sector?: string | null
+          strategy_summary?: string | null
+          strategy_summary_edited?: boolean
+          strategy_summary_source?: string | null
           themes?: string | null
           website?: string | null
         }
@@ -869,6 +875,9 @@ export type Database = {
           pr_region?: string | null
           pr_research_budget?: boolean
           sector?: string | null
+          strategy_summary?: string | null
+          strategy_summary_edited?: boolean
+          strategy_summary_source?: string | null
           themes?: string | null
           website?: string | null
         }
