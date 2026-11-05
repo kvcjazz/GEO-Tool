@@ -2,11 +2,11 @@
 // line breaks inside quotes, CRLF or LF. Also accepts semicolon- or tab-
 // separated files (Excel in some locales), detected from the header line.
 
-export function parseCsv(text: string): string[][] {
+export function parseCsv(text: string, separator?: "," | ";" | "\t"): string[][] {
   const src = text.replace(/^﻿/, "");
   const firstLine = src.split(/\r?\n/, 1)[0] || "";
   const count = (ch: string) => firstLine.split(ch).length - 1;
-  const sep = [",", ";", "\t"].sort((a, b) => count(b) - count(a))[0];
+  const sep = separator || [",", ";", "\t"].sort((a, b) => count(b) - count(a))[0];
 
   const rows: string[][] = [];
   let row: string[] = [];

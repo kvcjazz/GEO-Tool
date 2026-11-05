@@ -1,4 +1,4 @@
-import type { Brand, Competitor, ContextItem, MediaTarget, Prompt } from "./types";
+import type { Brand, Competitor, ContextItem, MediaTarget, Prompt, SearchTerm } from "./types";
 import { FACT_FIELDS, factSheetFilled } from "./factSheet";
 
 // The Client setup checklist: what a client needs before the monthly check
@@ -22,8 +22,11 @@ export function setupSteps(
     prompts: Prompt[];
     media: MediaTarget[];
     context: ContextItem[];
+    searchTerms?: SearchTerm[];
   },
 ): SetupStep[] {
+  const seoTerms = d.searchTerms?.length || 0;
+  const seoQuestions = d.prompts.filter((p) => p.seo_seed).length;
   const active = d.prompts.filter((p) => p.active);
   const seen = new Set<string>();
   const dupes = new Set<string>();
@@ -79,6 +82,16 @@ export function setupSteps(
               .join(", ")} (e.g. “${noShortName[0].name.split(/\s+/)[0]}”) under “Also known as”.`
           : `${d.competitors.length} tracked.`,
       status: !d.competitors.length || noShortName.length ? "attention" : "done",
+    },
+    {
+      id: "search",
+      title: "Search demand (SEO input, optional)",
+      detail: seoTerms
+        ? `${seoTerms} Google search terms imported; ${seoQuestions} tracked question${
+            seoQuestions === 1 ? "" : "s"
+          } drafted from them. Helps choose questions only — not part of the GEO score.`
+        : "Import the client's Search Console or keyword data to draft AI questions from what people actually search for. Optional; not part of the GEO score.",
+      status: seoTerms ? "done" : "review",
     },
     {
       id: "questions",

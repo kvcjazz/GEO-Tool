@@ -17,6 +17,16 @@ import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
 import CategoryBrandsPanel from "@/components/CategoryBrandsPanel";
 import { setupSteps } from "@/lib/setup";
+import { SeoChip } from "@/components/ui";
+import {
+  demandOf,
+  formatDemand,
+  normQuery,
+  parseSearchExport,
+  readExportFile,
+  seoOriginText,
+  termsForBrief,
+} from "@/lib/searchDemand";
 import { FACT_FIELDS, MARKETS, factSheetOf, type FactSheet } from "@/lib/factSheet";
 import type { Prompt } from "@/lib/types";
 import type { Database } from "@/lib/database.types";
@@ -84,6 +94,15 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
   const [suggError, setSuggError] = useState("");
   const [suggPicks, setSuggPicks] = useState<Set<number>>(new Set());
   const [suggBusy, setSuggBusy] = useState(false);
+  /** Which button produced the suggestions on screen: strategy-led, or drafted from search demand (SEO). */
+  const [suggFocus, setSuggFocus] = useState<"strategy" | "search">("strategy");
+  /** Which section's button asked, so the results show right under it. */
+  const [suggAt, setSuggAt] = useState<"seo" | "questions">("questions");
+  const [suggUnmatched, setSuggUnmatched] = useState(0);
+  const [seoPaste, setSeoPaste] = useState("");
+  const [seoFile, setSeoFile] = useState<File | null>(null);
+  const [seoBusy, setSeoBusy] = useState(false);
+  const [seoShowAll, setSeoShowAll] = useState(false);
 
   useEffect(() => setPrompts(data.prompts), [data.prompts]);
 
@@ -123,6 +142,19 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
 
   if (!brand) return null;
   const steps = setupSteps(brand, data);
+  // SEO input (search demand), sorted by demand for display.
+  const seoTerms = [...data.searchTerms].sort(
+    (a, b) => (demandOf(b).value ?? -1) - (demandOf(a).value ?? -1),
+  );
+  const seoSources = [...new Set(seoTerms.map((t) => t.source).filter(Boolean))].join(", ");
+  const seoImported = seoTerms.reduce(
+    (m, t) => (t.imported_at > m ? t.imported_at : m),
+    "",
+  );
+  const seoUsedBy = new Map(
+    data.prompts.filter((p) => p.seo_seed).map((p) => [normQuery(p.seo_seed!), p.code]),
+  );
+  const seoQuestionCount = prompts.filter((p) => p.seo_seed).length;
   const mwTot = METRIC_KEYS.reduce((s, k) => s + (+mw[k] || 0), 0);
   const ewTot = ENGINES.reduce((s, en) => s + (+ew[en] || 0), 0);
 
@@ -322,15 +354,33 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     await reload();
   }
 
-  async function suggestPrompts() {
+  /**
+   * "strategy": the strategist drafts questions from the strategy, notes and
+   * latest check. "search": every question is drafted from an imported Google
+   * search term (SEO input) and carries that term so it stays labelled.
+   */
+  async function suggestPrompts(
+    focus: "strategy" | "search" = "strategy",
+    at: "seo" | "questions" = "questions",
+  ) {
     setSuggBusy(true);
     setSugg([]);
     setSuggNote("");
     setSuggError("");
+    setSuggUnmatched(0);
+    setSuggFocus(focus);
+    setSuggAt(at);
     try {
+      const brief = buildAdviseBrief(brand!, data);
       const j = await callFn(
         "geo-advise",
-        { mode: "suggest", brief: buildAdviseBrief(brand!, data) },
+        focus === "search"
+          ? {
+              mode: "suggest",
+              focus: "search",
+              brief: { ...brief, search_demand: termsForBrief(data.searchTerms, data.prompts) },
+            }
+          : { mode: "suggest", brief },
         AdviseSuggestSchema,
       );
       if (j.error || !j.prompts?.length) {
@@ -338,12 +388,21 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       } else {
         setSugg(j.prompts);
         setSuggNote(j.note || "");
+        setSuggUnmatched(j.unmatched || 0);
         setSuggPicks(new Set(j.prompts.map((_, i) => i)));
       }
     } catch (e) {
       setSuggError("Couldn't reach the suggestion service: " + String(e));
     }
     setSuggBusy(false);
+    // Bring the results (or the error) into view under the button that asked.
+    setTimeout(
+      () =>
+        document
+          .getElementById("sugg-panel")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      50,
+    );
   }
 
   async function addSelectedSuggestions() {
@@ -359,14 +418,86 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         text: p!.text,
         sort: n,
         active: true,
+        seo_seed: p!.seo_seed || null,
+        seo_demand: p!.seo_seed ? (p!.seo_demand ?? null) : null,
+        seo_demand_kind: p!.seo_seed ? (p!.seo_demand_kind ?? null) : null,
       };
     });
     const { error } = await sb.from("geo_prompts").insert(rows);
     if (error) return toast("Failed: " + error.message);
     setSugg([]);
-    toast(rows.length + " questions added");
+    toast(
+      `${rows.length} question${rows.length === 1 ? "" : "s"} added to Questions we track`,
+    );
     await reload();
     offerToMeasure(rows.length);
+  }
+
+  /** Import Google search terms (SEO input) from an export file or a pasted list. */
+  async function importSearchTerms() {
+    if (!seoFile && !seoPaste.trim()) return toast("Choose a file or paste search terms first");
+    if (seoFile && seoFile.size > 20_000_000) return toast("File too large (max ~20MB)");
+    setSeoBusy(true);
+    try {
+      const text = seoFile ? await readExportFile(seoFile) : seoPaste;
+      const { terms, source } = parseSearchExport(text);
+      if (!terms.length) {
+        toast("No search terms found — check the file has a Query or Keyword column");
+        return;
+      }
+      const keep = terms.slice(0, 2000);
+      const now = new Date().toISOString();
+      // A term imported again from another tool keeps the figures it already
+      // had (e.g. Search Console impressions survive a Semrush volume import).
+      const existing = new Map(data.searchTerms.map((t) => [t.query, t]));
+      const rows = keep.map((t) => {
+        const old = existing.get(t.query);
+        const sources = [...new Set([old?.source, source].filter(Boolean))].join(" + ");
+        return {
+          brand_id: brand!.id,
+          query: t.query,
+          volume: t.volume ?? old?.volume ?? null,
+          impressions: t.impressions ?? old?.impressions ?? null,
+          clicks: t.clicks ?? old?.clicks ?? null,
+          position: t.position ?? old?.position ?? null,
+          source: sources || source,
+          imported_at: now,
+        };
+      });
+      for (let i = 0; i < rows.length; i += 500) {
+        const { error } = await sb.from("geo_search_terms").upsert(
+          rows.slice(i, i + 500),
+          { onConflict: "brand_id,query" },
+        );
+        if (error) {
+          toast("Import failed: " + error.message);
+          return;
+        }
+      }
+      setSeoFile(null);
+      setSeoPaste("");
+      toast(
+        `Imported ${keep.length} search terms from ${source}` +
+          (terms.length > keep.length ? ` (top ${keep.length} of ${terms.length} by demand)` : ""),
+      );
+      await reload();
+    } catch (e) {
+      toast("Couldn't read search data: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSeoBusy(false);
+    }
+  }
+
+  async function clearSearchTerms() {
+    if (
+      !window.confirm(
+        "Remove all imported search data for this client? Tracked questions drafted from it are kept (and keep their SEO label).",
+      )
+    )
+      return;
+    const { error } = await sb.from("geo_search_terms").delete().eq("brand_id", brand!.id);
+    toast(error ? "Failed: " + error.message : "Search data removed");
+    await reload();
   }
 
   async function addContext() {
@@ -557,6 +688,132 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     setView("admin");
   }
 
+  /**
+   * The suggestion results, shown right under whichever button asked for them
+   * (Search demand or Questions we track) so they can't be missed.
+   */
+  function renderSuggestions() {
+    return (
+      <div id="sugg-panel" style={{ scrollMarginTop: 90 }}>
+        {suggBusy && (
+          <div className="legend-note" style={{ marginTop: 10 }}>
+            Drafting questions… this takes up to a minute. They will appear here for you to
+            pick from.
+          </div>
+        )}
+        {suggError && (
+          <div className="legend-note" style={{ marginTop: 10, color: "var(--red)" }}>
+            {suggError}
+          </div>
+        )}
+        {sugg && sugg.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            {suggFocus === "search" && (
+              <div className="legend-note" style={{ color: "var(--seo)" }}>
+                <SeoChip /> Drafted from the client&#39;s Google search demand. Search data
+                only picked the topics — once added, these are measured in the AI engines
+                like any other question.
+                {suggUnmatched > 0 &&
+                  ` ${suggUnmatched} suggestion${suggUnmatched === 1 ? " was" : "s were"} dropped because ${
+                    suggUnmatched === 1 ? "it" : "they"
+                  } couldn't be tied to an imported search term.`}
+              </div>
+            )}
+            <div className="legend-note">
+              {suggNote || "Ranked by impact on this client\u2019s strategy."} Tick the
+              ones to add.
+            </div>
+            <div style={{ overflow: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Type</th>
+                    <th>Suggested question</th>
+                    {suggFocus === "search" && <th>Search behind it (SEO)</th>}
+                    <th>Who &amp; when</th>
+                    <th>Impact</th>
+                    <th>Why it matters</th>
+                    <th>How PR can win it</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sugg.map((p, i) => (
+                    <tr key={i}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          style={{ width: "auto" }}
+                          checked={suggPicks.has(i)}
+                          onChange={(e) =>
+                            setSuggPicks((prev) => {
+                              const n = new Set(prev);
+                              if (e.target.checked) n.add(i);
+                              else n.delete(i);
+                              return n;
+                            })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <span className="badge">{p!.ptype}</span>
+                      </td>
+                      <td style={{ minWidth: 220 }}>
+                        {p!.text}
+                        {p!.names_client && (
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            {" "}
+                            (names the client)
+                          </span>
+                        )}
+                      </td>
+                      {suggFocus === "search" && (
+                        <td style={{ minWidth: 170 }}>
+                          {p!.seo_seed ? (
+                            <div className="seo-line" style={{ marginTop: 0 }}>
+                              <SeoChip /> “{p!.seo_seed}”
+                              <div className="muted" style={{ fontSize: 11 }}>
+                                {formatDemand(p!.seo_demand, p!.seo_demand_kind)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                      )}
+                      <td className="muted" style={{ minWidth: 120, fontSize: 12 }}>
+                        {[p!.persona, p!.stage].filter(Boolean).join(" · ")}
+                      </td>
+                      <td
+                        style={{ color: "#C9871B", whiteSpace: "nowrap" }}
+                        title={`Impact ${p!.impact}/5`}
+                      >
+                        {stars(Number(p!.impact))}
+                      </td>
+                      <td className="muted" style={{ minWidth: 220 }}>
+                        {p!.reason}
+                      </td>
+                      <td className="muted" style={{ minWidth: 200 }}>
+                        {p!.lever}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              className="btn sm"
+              style={{ marginTop: 8 }}
+              onClick={addSelectedSuggestions}
+            >
+              Add selected to Questions we track
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       {section === "setup" && (
@@ -684,7 +941,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         </button>
         <div className="legend-note">
           Strategy shapes the questions you track and powers the ✨ AI guidance in the
-          action plan.
+          action plan. The Overview shows a short AI summary of this strategy and the PR
+          profile, rewritten whenever they change here. You can edit that summary on the
+          Overview; an edited summary is never overwritten without asking.
         </div>
       </div>
         </div>
@@ -761,6 +1020,158 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         </div>
         <CategoryBrandsPanel />
         </div>
+        <div id="setup-search" className="setup-section">
+        {/* Search demand — SEO input, kept visibly separate from GEO measurement */}
+        <div className="card seo-card">
+          <h3 style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <SeoChip /> Search demand
+            <span className="muted" style={{ textTransform: "none", fontWeight: 500 }}>
+              — optional input for choosing which questions to ask AI
+            </span>
+          </h3>
+          <div className="seo-geo-key">
+            <div className="k-seo">
+              <b style={{ color: "var(--seo)" }}>🔍 SEO — search demand (this section)</b>
+              What people type into Google, from the client&#39;s Search Console or a keyword
+              tool. We use it only to decide which questions are worth asking the AI engines.
+              It is <u>not</u> part of the GEO score.
+            </div>
+            <div className="k-geo">
+              <b style={{ color: "var(--blue)" }}>◎ GEO — AI visibility (the rest of the tool)</b>
+              Whether the AI engines name, cite and recommend the client when they are asked
+              those questions. Measured in the monthly check — this is what the scores, answers
+              and reports show.
+            </div>
+          </div>
+
+          {seoTerms.length > 0 ? (
+            <>
+              <div className="legend-note" style={{ marginTop: 6 }}>
+                <b>{seoTerms.length}</b> search terms
+                {seoSources ? <> from {seoSources}</> : null}
+                {seoImported ? <> · last imported {seoImported.slice(0, 10)}</> : null} ·{" "}
+                {seoQuestionCount} tracked question{seoQuestionCount === 1 ? "" : "s"} drafted
+                from them. Highest demand first.
+              </div>
+              <div style={{ overflow: "auto", marginTop: 6 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Google search term</th>
+                      <th>Search demand</th>
+                      <th>Clicks to client site</th>
+                      <th title="Where the client's site ranks in Google for this term — an SEO figure, not an AI result">
+                        Google rank
+                      </th>
+                      <th>AI question</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {seoTerms.slice(0, seoShowAll ? 200 : 12).map((t) => {
+                      const d = demandOf(t);
+                      const code = seoUsedBy.get(t.query);
+                      return (
+                        <tr key={t.id}>
+                          <td>{t.query}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{formatDemand(d.value, d.kind)}</td>
+                          <td className="muted">{t.clicks ?? "—"}</td>
+                          <td className="muted">
+                            {t.position != null ? Math.round(t.position * 10) / 10 : "—"}
+                          </td>
+                          <td>
+                            {code ? (
+                              <span className="badge" title="A tracked question was drafted from this search">
+                                {code}
+                              </span>
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {seoTerms.length > 12 && (
+                <button
+                  type="button"
+                  className="btn sm ghost"
+                  style={{ marginTop: 6 }}
+                  onClick={() => setSeoShowAll((v) => !v)}
+                >
+                  {seoShowAll
+                    ? "Show top 12"
+                    : `Show more (${Math.min(200, seoTerms.length)} of ${seoTerms.length})`}
+                </button>
+              )}
+              <div className="flex" style={{ marginTop: 12, gap: 8, flexWrap: "wrap" }}>
+                <button
+                  className="btn sm"
+                  onClick={() => suggestPrompts("search", "seo")}
+                  disabled={suggBusy}
+                  style={{ background: "var(--seo)", borderColor: "var(--seo)" }}
+                >
+                  {suggBusy && suggFocus === "search"
+                    ? "Thinking… (up to a minute)"
+                    : "✨ Suggest AI questions from these searches"}
+                </button>
+                <button className="btn sm ghost" onClick={clearSearchTerms}>
+                  Clear search data
+                </button>
+              </div>
+              <div className="legend-note">
+                The strategist rewrites search terms as the conversational questions buyers ask
+                AI (a short search like “b2b pr agency” becomes a full question). Suggestions
+                appear just below: tick the ones you want and click <b>Add selected</b> to put them
+                in Questions we track. They are then measured in the AI engines like any other
+                question.
+              </div>
+              {suggAt === "seo" && renderSuggestions()}
+            </>
+          ) : (
+            <div className="legend-note">
+              No search data yet. Importing it is optional — without it, questions are drafted
+              from the strategy alone.
+            </div>
+          )}
+
+          <details style={{ marginTop: 12 }} open={!seoTerms.length}>
+            <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+              {seoTerms.length ? "Import more search data" : "Import search data"}
+            </summary>
+            <div className="legend-note">
+              Works with: <b>Google Search Console</b> → Performance → Export → unzip and upload{" "}
+              <i>Queries.csv</i>; <b>Semrush</b>, <b>Ahrefs</b> or <b>Google Keyword Planner</b>{" "}
+              keyword exports (CSV); or paste a list — one term per line, optionally followed by a
+              comma and its monthly searches. Re-importing a term updates its figures.
+            </div>
+            <div className="flex" style={{ marginTop: 8, gap: 8, flexWrap: "wrap" }}>
+              <input
+                type="file"
+                accept=".csv,.tsv,.txt,text/csv,text/plain"
+                style={{ width: "auto" }}
+                onChange={(e) => setSeoFile(e.target.files?.[0] || null)}
+              />
+            </div>
+            <textarea
+              value={seoPaste}
+              rows={4}
+              placeholder={"…or paste search terms, e.g.\nbest b2b pr agency uk, 880\nhow to choose a pr agency, 590"}
+              style={{ width: "100%", marginTop: 8 }}
+              onChange={(e) => setSeoPaste(e.target.value)}
+            />
+            <button
+              className="btn sm"
+              style={{ marginTop: 8 }}
+              onClick={importSearchTerms}
+              disabled={seoBusy}
+            >
+              {seoBusy ? "Importing…" : "Import search data"}
+            </button>
+          </details>
+        </div>
+        </div>
         <div id="setup-questions" className="setup-section">
         {/* Prompt set */}
         <div className="card" style={{ gridColumn: "1/-1" }}>
@@ -801,6 +1212,12 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                             savePrompt(p.id, "text", e.target.value);
                         }}
                       />
+                      {p.seo_seed && (
+                        <div className="seo-line" title={seoOriginText(p)}>
+                          <SeoChip /> from Google search “{p.seo_seed}” ·{" "}
+                          {formatDemand(p.seo_demand, p.seo_demand_kind)}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <input
@@ -820,6 +1237,13 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
               </tbody>
             </table>
           </div>
+          {seoQuestionCount > 0 && (
+            <div className="legend-note">
+              <SeoChip /> marks questions drafted from Google search demand. That only explains
+              why we chose them — their AI answers and scores are GEO measurement, exactly like
+              every other question.
+            </div>
+          )}
           <div className="flex" style={{ marginTop: 10 }}>
             <input
               value={newPrompt}
@@ -834,97 +1258,45 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           <div
             style={{ marginTop: 12, borderTop: "1px solid var(--line)", paddingTop: 12 }}
           >
-            <button className="btn sm" onClick={suggestPrompts} disabled={suggBusy}>
-              {suggBusy ? "✨ Thinking… (up to a minute)" : "✨ Suggest questions"}
-            </button>{" "}
-            <span className="muted" style={{ fontSize: 12 }}>
-              Drafted like a GEO strategist would: uses the strategy, PR profile and
-              market, the client notes and team guidance, competitors, the questions
-              already tracked and what the latest check found. You pick which to add.
-            </span>
-            {suggError && (
-              <div className="legend-note" style={{ marginTop: 10, color: "var(--red)" }}>
-                {suggError}
-              </div>
-            )}
-            {sugg && sugg.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div className="legend-note">
-                  {suggNote || "Ranked by impact on this client\u2019s strategy."} Tick the
-                  ones to add.
-                </div>
-                <div style={{ overflow: "auto" }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th></th>
-                        <th>Type</th>
-                        <th>Suggested question</th>
-                        <th>Who &amp; when</th>
-                        <th>Impact</th>
-                        <th>Why it matters</th>
-                        <th>How PR can win it</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sugg.map((p, i) => (
-                        <tr key={i}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              style={{ width: "auto" }}
-                              checked={suggPicks.has(i)}
-                              onChange={(e) =>
-                                setSuggPicks((prev) => {
-                                  const n = new Set(prev);
-                                  if (e.target.checked) n.add(i);
-                                  else n.delete(i);
-                                  return n;
-                                })
-                              }
-                            />
-                          </td>
-                          <td>
-                            <span className="badge">{p!.ptype}</span>
-                          </td>
-                          <td style={{ minWidth: 220 }}>
-                            {p!.text}
-                            {p!.names_client && (
-                              <span className="muted" style={{ fontSize: 11 }}>
-                                {" "}
-                                (names the client)
-                              </span>
-                            )}
-                          </td>
-                          <td className="muted" style={{ minWidth: 120, fontSize: 12 }}>
-                            {[p!.persona, p!.stage].filter(Boolean).join(" · ")}
-                          </td>
-                          <td
-                            style={{ color: "#C9871B", whiteSpace: "nowrap" }}
-                            title={`Impact ${p!.impact}/5`}
-                          >
-                            {stars(Number(p!.impact))}
-                          </td>
-                          <td className="muted" style={{ minWidth: 220 }}>
-                            {p!.reason}
-                          </td>
-                          <td className="muted" style={{ minWidth: 200 }}>
-                            {p!.lever}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <button
-                  className="btn sm"
-                  style={{ marginTop: 8 }}
-                  onClick={addSelectedSuggestions}
-                >
-                  Add selected to prompt set
-                </button>
-              </div>
-            )}
+            <div className="flex" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button
+                className="btn sm"
+                onClick={() => suggestPrompts("strategy", "questions")}
+                disabled={suggBusy}
+              >
+                {suggBusy && suggFocus === "strategy"
+                  ? "✨ Thinking… (up to a minute)"
+                  : "✨ Suggest questions"}
+              </button>
+              <button
+                className="btn sm"
+                onClick={() => suggestPrompts("search", "questions")}
+                disabled={suggBusy || !seoTerms.length}
+                title={
+                  seoTerms.length
+                    ? "Draft questions from the imported Google search terms (SEO input)"
+                    : "Import search data in the Search demand section first"
+                }
+                style={
+                  seoTerms.length
+                    ? { background: "var(--seo)", borderColor: "var(--seo)" }
+                    : undefined
+                }
+              >
+                {suggBusy && suggFocus === "search"
+                  ? "🔍 Thinking… (up to a minute)"
+                  : "🔍 Suggest from search demand (SEO)"}
+              </button>
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              <b>Suggest questions</b> drafts like a GEO strategist: strategy, PR profile and
+              market, client notes, competitors, questions already tracked and what the latest
+              check found. <b>Suggest from search demand</b> does the same but starts from what
+              people search for on Google
+              {seoTerms.length ? "" : " (import search data above to use it)"}. You pick which
+              to add.
+            </div>
+            {suggAt === "questions" && renderSuggestions()}
           </div>
         </div>
         </div>

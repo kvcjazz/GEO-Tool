@@ -19,6 +19,9 @@
   --line: #e4e9f2;
   --bg: #f4f6fb;
   --card: #fff;
+  /* SEO input (search demand) — its own colour so it never reads as a GEO result. */
+  --seo: #0b7a75;
+  --seo-soft: #e1f3f1;
 }
 
 * {
@@ -828,6 +831,57 @@ td input {
   color: var(--muted);
   font-weight: 700;
 }
+/* ---- SEO input (search demand). Always labelled, always teal, never blue. ---- */
+.tag-seo {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-weight: 700;
+  display: inline-block;
+  background: var(--seo-soft);
+  color: var(--seo);
+  border: 1px solid #b9e2dd;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.seo-card {
+  border-left: 5px solid var(--seo);
+}
+.seo-line {
+  font-size: 11.5px;
+  color: var(--seo);
+  margin-top: 4px;
+}
+.seo-geo-key {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+.seo-geo-key > div {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.seo-geo-key .k-seo {
+  background: var(--seo-soft);
+  border: 1px solid #b9e2dd;
+}
+.seo-geo-key .k-geo {
+  background: var(--blue-soft);
+  border: 1px solid #cfdcf5;
+}
+.seo-geo-key b {
+  display: block;
+  margin-bottom: 2px;
+}
+@media (max-width: 700px) {
+  .seo-geo-key {
+    grid-template-columns: 1fr;
+  }
+}
 .legend-note {
   font-size: 12px;
   color: var(--muted);
@@ -1214,4 +1268,83 @@ button.ctx-client:hover {
   padding: 2px 6px;
   font-size: 11px;
   border-radius: 6px;
+}
+
+/* ---------- strategy summary (Overview) ---------- */
+.strategy-banner .sb-status {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.strategy-banner .sb-points {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--navy);
+}
+.strategy-banner .sb-points li + li {
+  margin-top: 3px;
+}
+.strategy-banner .sb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.strategy-banner .sb-actions > span {
+  flex: 1 1 auto;
+}
+.strategy-banner .sb-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--blue);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.strategy-banner .sb-link:hover {
+  text-decoration: underline;
+}
+.strategy-banner .sb-warn {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6e4a0c;
+  background: #fdf3df;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+/* ---------- chart explainers ---------- */
+.explainer {
+  margin-top: 12px;
+  border-top: 1px solid #eef1f7;
+  padding-top: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.explainer .ex-h {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin: 0 0 3px;
+}
+.explainer p {
+  margin: 0 0 8px;
+}
+.explainer ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.explainer li + li {
+  margin-top: 4px;
 }
