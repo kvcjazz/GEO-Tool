@@ -7,6 +7,7 @@ import {
   brandMentionsTotal,
   categoryBrands,
   computeAll,
+  engineWeights,
   missingEntities,
   shareOfVoice,
   confLabel,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/scoring";
 import { r1, sum } from "@/lib/format";
 import { reachSplit } from "@/lib/questions";
+import { explainEngines } from "@/lib/engineExplainer";
 import { gapSources, isTarget } from "@/lib/sources";
 import type { Run } from "@/lib/types";
 import type { DateRange } from "@/lib/types";
@@ -130,6 +132,16 @@ export default function DashboardView() {
   const att = prAttribution(responses);
   const conf = confLabel(responses);
   const mw = metricWeights(brand);
+  const answersByEngine: Record<string, number> = {};
+  for (const r of responses) answersByEngine[r.engine] = (answersByEngine[r.engine] || 0) + 1;
+  const engineNote = explainEngines(
+    perEngine,
+    answersByEngine,
+    engineWeights(brand),
+    mw,
+    brand.name,
+    currentRun.method === "v2",
+  );
 
   const rs = filterRuns(comparable, dateRange, currentRun);
   const prYM = pr.map((p) => (p.activity_date || "").slice(0, 7));
@@ -275,6 +287,18 @@ export default function DashboardView() {
               options={BAR_OPTS}
             />
           </div>
+          {engineNote && (
+            <div className="explainer">
+              <div className="ex-h">What this shows</div>
+              <p>{engineNote.what}</p>
+              <div className="ex-h">Why the bars differ</div>
+              <ul>
+                {engineNote.why.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 

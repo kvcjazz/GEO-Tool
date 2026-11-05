@@ -173,3 +173,24 @@ reused untouched.
   Gemini); Claude calls get ≥16k tokens so thinking can't empty the reply.
 - **Client switching:** All clients home, sidebar client block, ⌘K switcher,
   `?client=` in the URL, last client remembered.
+
+## 2026-11-05 — Overview explainers: engine chart + strategy summary
+
+- **GEO score by engine** now has a "What this shows / Why the bars differ"
+  note (`src/lib/engineExplainer.ts`). It is worked out from the same numbers
+  as the chart, with no AI call: the top and bottom engine and the weighted
+  metric that most explains each (vs the other engines' average), a note when
+  the client isn't named at all, small-sample warnings (<10 answers), engines
+  not measured, and the engine weights behind the headline score.
+- **Visibility strategy** on the Overview is now a short AI summary (headline
+  + 2–4 bullets) of the strategy and PR profile in Client setup, instead of the
+  raw fields. `geo-advise` gained `mode: "summary"` (v14); it reads only the
+  strategy/PR-profile fields, never client notes, PR expectations or budget,
+  because clients see this banner.
+- Stored in `geo_brands.strategy_summary` (+ `_source` fingerprint and
+  `_edited`), migration `20261105210000_strategy_summary` (applied). The
+  Overview writes it when missing, rewrites it when Client setup changes, and
+  the team can ✎ Edit / ✨ Rewrite it. An edited summary is never overwritten
+  automatically; the team sees "Client setup has changed" with a rewrite link.
+- Not yet clicked through signed in (no sign-in from the build container).
+  `geo-advise` v14 boots and still refuses unsigned calls (checked via pg_net).
