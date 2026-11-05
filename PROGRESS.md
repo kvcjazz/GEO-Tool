@@ -154,3 +154,22 @@ reused untouched.
 - **Titles to target** (PR #4 branch) merged into this branch.
 - **Security:** geo-run-batch, geo-publish, geo-pilot, geo-diag replaced by a
   410 stub; geo-advise and geo-listen no longer open.
+
+## 2026-11-05 — Share of voice v2, stop/resume, AI fallback, client switching
+
+- **Share of voice v2:** `geo_responses.entities` lists every brand each
+  answer names (order, recommended, client found in code) — filled by
+  geo-measure for new answers and by `geo-entities` for older ones. Headline
+  SOV = client's points ÷ all brands' points on questions that don't name the
+  client (recommended = 2, mention = 1, averaged over samples); branded SOV
+  shown separately; old formula used only for answers without brand data.
+  Client setup → Competitors lists every brand named with one-click Track.
+  Scores re-baseline when this lands (SOV is 25% of the GEO score).
+- **Stop / resume:** `geo_cancel_run(rid)` cancels queued and running jobs
+  (`cancelled` status; geo-measure doesn't save a cancelled job). Header has
+  Stop while measuring and Measure now / Resume with the missing count.
+- **New questions:** adding questions offers to measure them immediately.
+- **AI fallback:** analysis calls go through `callAnalyst` (Claude → OpenAI →
+  Gemini); Claude calls get ≥16k tokens so thinking can't empty the reply.
+- **Client switching:** All clients home, sidebar client block, ⌘K switcher,
+  `?client=` in the URL, last client remembered.
