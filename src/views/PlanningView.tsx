@@ -5,6 +5,7 @@ import { useAppState } from "@/state/AppState";
 import { newsDate, stars } from "@/lib/format";
 import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
+import { buildAdviseBrief } from "@/lib/adviseBrief";
 import { NewsResponseSchema, RadarResponseSchema } from "@/lib/schemas";
 import { memoryText } from "@/lib/memory";
 import { latestTargets } from "@/lib/targets";
@@ -71,6 +72,7 @@ export default function PlanningView() {
           themes: brand!.themes,
           sector: brand!.sector,
           pr_region: brand!.pr_region,
+          market_country: brand!.market_country,
           competitors: data.competitors.map((c) => c.name),
         },
         NewsResponseSchema,
@@ -84,7 +86,9 @@ export default function PlanningView() {
               (j.competitorNews && j.competitorNews.length
                 ? " · " + j.competitorNews.length + " competitor"
                 : "")
-          : "No fresh stories found for these themes",
+          : j.error
+            ? "News source unavailable: " + j.error
+            : "No fresh stories found for these themes",
       );
       await reload();
     } catch (e) {
@@ -111,6 +115,8 @@ export default function PlanningView() {
         .map((r) => r.title)
         .filter(Boolean);
       const payload = {
+        brief: buildAdviseBrief(brand!, data),
+        market_country: brand!.market_country,
         brand: brand!.name,
         sector: brand!.sector,
         pr_region: brand!.pr_region,
@@ -206,7 +212,9 @@ export default function PlanningView() {
             : rows.length +
                 " new ideas added" +
                 (dups > 0 ? " · " + dups + " duplicates skipped" : "") +
-                (j.source === "template" ? " · template" : ""),
+                (j.source === "template"
+                  ? " · generic template (AI unavailable: " + (j.note || "unknown error") + ")"
+                  : ""),
         );
       }
       await reload();

@@ -20,6 +20,7 @@ export const NewsResponseSchema = z.object({
   articles: z.array(NewsArticleSchema).nullish(),
   competitorNews: z.array(NewsArticleSchema).nullish(),
   query: z.string().nullish(),
+  error: z.string().nullish(),
 });
 export type NewsResponse = z.infer<typeof NewsResponseSchema>;
 
@@ -40,6 +41,8 @@ export const RadarResponseSchema = z.object({
   news: z.array(NewsArticleSchema).nullish(),
   competitorNews: z.array(NewsArticleSchema).nullish(),
   source: z.string().nullish(),
+  note: z.string().nullish(),
+  newsError: z.string().nullish(),
 });
 export type RadarResponse = z.infer<typeof RadarResponseSchema>;
 
