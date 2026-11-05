@@ -10,7 +10,7 @@ import {
 } from "@/lib/constants";
 import { metricWeights, engineWeights } from "@/lib/scoring";
 import { stars, todayISO, monthLabel, parseAliases } from "@/lib/format";
-import { ctxString } from "@/lib/context";
+import { buildAdviseBrief } from "@/lib/adviseBrief";
 import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
@@ -73,7 +73,8 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
   const [fileGuidance, setFileGuidance] = useState("");
   const [fileObj, setFileObj] = useState<File | null>(null);
   const [sugg, setSugg] = useState<Sugg>([]);
-  const [suggSource, setSuggSource] = useState("");
+  const [suggNote, setSuggNote] = useState("");
+  const [suggError, setSuggError] = useState("");
   const [suggPicks, setSuggPicks] = useState<Set<number>>(new Set());
   const [suggBusy, setSuggBusy] = useState(false);
 
@@ -272,29 +273,23 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
   async function suggestPrompts() {
     setSuggBusy(true);
     setSugg([]);
+    setSuggNote("");
+    setSuggError("");
     try {
       const j = await callFn(
         "geo-advise",
-        {
-          mode: "suggest",
-          brand: brand!.name,
-          website: brand!.website,
-          context: ctxString(data.context),
-          sector: brand!.sector,
-          objective: brand!.objective,
-          positioning: brand!.positioning,
-          audience: brand!.audience,
-          themes: brand!.themes,
-          competitors: data.competitors.map((c) => c.name),
-        },
+        { mode: "suggest", brief: buildAdviseBrief(brand!, data) },
         AdviseSuggestSchema,
       );
-      const list = j.prompts || [];
-      setSugg(list);
-      setSuggSource(j.source || "");
-      setSuggPicks(new Set(list.map((_, i) => i)));
+      if (j.error || !j.prompts?.length) {
+        setSuggError(j.error || "No suggestions came back. Try again.");
+      } else {
+        setSugg(j.prompts);
+        setSuggNote(j.note || "");
+        setSuggPicks(new Set(j.prompts.map((_, i) => i)));
+      }
     } catch (e) {
-      toast("Couldn't fetch suggestions: " + String(e));
+      setSuggError("Couldn't reach the suggestion service: " + String(e));
     }
     setSuggBusy(false);
   }
@@ -748,17 +743,23 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
             style={{ marginTop: 12, borderTop: "1px solid var(--line)", paddingTop: 12 }}
           >
             <button className="btn sm" onClick={suggestPrompts} disabled={suggBusy}>
-              {suggBusy ? "✨ Thinking…" : "✨ Suggest questions from strategy"}
+              {suggBusy ? "✨ Thinking… (up to a minute)" : "✨ Suggest questions"}
             </button>{" "}
             <span className="muted" style={{ fontSize: 12 }}>
-              Ranked by impact on this client&#39;s strategy; you pick which to add to
-              your existing prompts.
+              Drafted like a GEO strategist would: uses the strategy, PR profile and
+              market, the client notes and team guidance, competitors, the questions
+              already tracked and what the latest check found. You pick which to add.
             </span>
+            {suggError && (
+              <div className="legend-note" style={{ marginTop: 10, color: "var(--red)" }}>
+                {suggError}
+              </div>
+            )}
             {sugg && sugg.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <div className="legend-note">
-                  Source: {suggSource === "ai" ? "AI-generated" : "strategy template"}.
-                  Ranked by impact on this client&#39;s strategy — tick the ones to add.
+                  {suggNote || "Ranked by impact on this client\u2019s strategy."} Tick the
+                  ones to add.
                 </div>
                 <div style={{ overflow: "auto" }}>
                   <table>
@@ -767,8 +768,10 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                         <th></th>
                         <th>Type</th>
                         <th>Suggested question</th>
+                        <th>Who &amp; when</th>
                         <th>Impact</th>
-                        <th>Why it matters to the strategy</th>
+                        <th>Why it matters</th>
+                        <th>How PR can win it</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -792,15 +795,29 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                           <td>
                             <span className="badge">{p!.ptype}</span>
                           </td>
-                          <td style={{ minWidth: 200 }}>{p!.text}</td>
+                          <td style={{ minWidth: 220 }}>
+                            {p!.text}
+                            {p!.names_client && (
+                              <span className="muted" style={{ fontSize: 11 }}>
+                                {" "}
+                                (names the client)
+                              </span>
+                            )}
+                          </td>
+                          <td className="muted" style={{ minWidth: 120, fontSize: 12 }}>
+                            {[p!.persona, p!.stage].filter(Boolean).join(" · ")}
+                          </td>
                           <td
                             style={{ color: "#C9871B", whiteSpace: "nowrap" }}
                             title={`Impact ${p!.impact}/5`}
                           >
                             {stars(Number(p!.impact))}
                           </td>
-                          <td className="muted" style={{ minWidth: 240 }}>
+                          <td className="muted" style={{ minWidth: 220 }}>
                             {p!.reason}
+                          </td>
+                          <td className="muted" style={{ minWidth: 200 }}>
+                            {p!.lever}
                           </td>
                         </tr>
                       ))}

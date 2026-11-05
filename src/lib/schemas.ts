@@ -58,13 +58,19 @@ export type ListenResponse = z.infer<typeof ListenResponseSchema>;
 export const SuggestPromptSchema = z.object({
   text: z.string(),
   ptype: z.string().nullish(),
+  stage: z.string().nullish(),
+  persona: z.string().nullish(),
+  names_client: z.boolean().nullish(),
   impact: z.union([z.number(), z.string()]).nullish(),
   reason: z.string().nullish(),
+  lever: z.string().nullish(),
 });
 
 export const AdviseSuggestSchema = z.object({
   prompts: z.array(SuggestPromptSchema).nullish(),
+  note: z.string().nullish(),
   source: z.string().nullish(),
+  model: z.string().nullish(),
   error: z.string().nullish(),
 });
 export type AdviseSuggestResponse = z.infer<typeof AdviseSuggestSchema>;

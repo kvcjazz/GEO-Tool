@@ -100,3 +100,22 @@ reused untouched.
   `geo_delete_brand` clears every brand-linked table. Applied live via
   migration `geo_delete_brand_fix_fk_cascade`; SQL kept in
   `supabase/migrations/20261105120000_geo_delete_brand_fix_fk_cascade.sql`.
+
+## 2026-11-05 — Expert question suggestions (geo-advise v10)
+
+- `geo-advise` source now lives in `supabase/functions/geo-advise/` and is
+  deployed with JWT verification + a signed-in check (it was open before).
+- The app sends one brief (`src/lib/adviseBrief.ts`): strategy, PR profile
+  incl. market/region and buyer persona, competitors (+ mentions in the latest
+  check), client notes with team-steered items first (12k chars), every
+  tracked question with its latest result, the latest check's reach split,
+  per-engine mention rate, gap sources (non-competitor sites cited when the
+  client is absent) and recent PR activity.
+- "Suggest questions" prompt follows GEO practice: conversational buyer
+  questions in the client's market, ≥2/3 unbranded, no priming with the
+  client's positioning, coverage of buying stages and personas, prioritised by
+  the latest gaps, de-duplicated against tracked questions. Each suggestion
+  shows persona, stage, impact, reason and the PR lever.
+- No silent template fallback for suggestions any more: failures show the
+  reason. Backlog "tailor" uses the same brief; a template fallback is shown
+  with its reason and is not saved.

@@ -38,7 +38,7 @@ import type {
   SourceKind,
 } from "@/lib/types";
 
-type BrandData = {
+export type BrandData = {
   competitors: Competitor[];
   prompts: Prompt[];
   runs: Run[];
