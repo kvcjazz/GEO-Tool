@@ -1366,6 +1366,7 @@ export type Database = {
           competitor_mentions: number
           confidence: string | null
           engine: string
+          entities: Json | null
           evidence: string | null
           id: string
           mention_rate: number | null
@@ -1390,6 +1391,7 @@ export type Database = {
           competitor_mentions?: number
           confidence?: string | null
           engine: string
+          entities?: Json | null
           evidence?: string | null
           id?: string
           mention_rate?: number | null
@@ -1414,6 +1416,7 @@ export type Database = {
           competitor_mentions?: number
           confidence?: string | null
           engine?: string
+          entities?: Json | null
           evidence?: string | null
           id?: string
           mention_rate?: number | null
@@ -2524,6 +2527,7 @@ export type Database = {
     }
     Functions: {
       geo_delete_brand: { Args: { bid: string }; Returns: undefined }
+      geo_cancel_run: { Args: { rid: string }; Returns: number }
       geo_enqueue_run: {
         Args: { p_only_new?: boolean; p_samples?: number; rid: string }
         Returns: number

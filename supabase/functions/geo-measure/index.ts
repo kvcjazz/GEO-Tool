@@ -40,6 +40,7 @@ import {
 import type { ProviderId } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 import { factSheetText } from "../_shared/facts.ts";
+import { extractEntities } from "../_shared/entities.ts";
 import {
   citationDomains,
   citesSite,
@@ -305,8 +306,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Attempts per job before it is left as failed (the dispatcher counts sends). */
 const MAX_ATTEMPTS = 2;
 
+/** Only a job still marked "sent" is finished: a cancelled one stays cancelled. */
 async function finish(job: Job, status: string, error: string | null) {
-  await rest(`geo_measure_jobs?id=eq.${job.id}`, {
+  await rest(`geo_measure_jobs?id=eq.${job.id}&status=eq.sent`, {
     method: "PATCH",
     body: { status, error, finished_at: status === "pending" ? null : new Date().toISOString() },
   });
@@ -328,7 +330,8 @@ async function runJob(jobId: string): Promise<Outcome> {
       website: string | null;
       market_country: string | null;
       fact_sheet: unknown;
-    }>(`geo_brands?id=eq.${run.brand_id}&select=name,aliases,website,market_country,fact_sheet`)
+      sector: string | null;
+    }>(`geo_brands?id=eq.${run.brand_id}&select=name,aliases,website,market_country,fact_sheet,sector`)
     : null;
   if (!prompt || !brand || !run) {
     await finish(job, "failed", "run, prompt or brand no longer exists");
@@ -360,7 +363,17 @@ async function runJob(jobId: string): Promise<Outcome> {
     return out;
   }
 
+  // Stopped by the team while this was running: don't save (or spend more).
+  const now = await first<{ status: string }>(`geo_measure_jobs?id=eq.${job.id}&select=status`);
+  if (now?.status !== "sent") return { ok: false, error: "cancelled" };
+
   const o = out.result;
+  // Every brand the answers name, for share of voice. Not fatal: geo-entities
+  // can fill it in later.
+  const client = { name: brand.name.trim(), aliases: brand.aliases || [], sector: brand.sector };
+  const ent = await extractEntities(client, [
+    { id: "r", question: prompt.text.trim(), answers: o.runs.map((r) => r.answer) },
+  ]);
   const row = {
     run_id: job.run_id,
     prompt_id: job.prompt_id,
@@ -381,6 +394,7 @@ async function runJob(jobId: string): Promise<Outcome> {
     model: o.model || null,
     web_search: o.web_search ?? null,
     raw: o.runs,
+    entities: ent.out.get("r") ?? null,
     ...(o.accuracy_note ? { notes: "Accuracy: " + o.accuracy_note } : {}),
   };
   // One row per prompt × engine in a run: overwrite a capture-grid row if any.

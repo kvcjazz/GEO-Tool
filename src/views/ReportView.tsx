@@ -3,7 +3,7 @@
 import { useAppState } from "@/state/AppState";
 import { useV2Answers } from "@/state/useV2Answers";
 import { ENGINES } from "@/lib/constants";
-import { brandMentionsTotal, computeAll } from "@/lib/scoring";
+import { brandMentionsTotal, categoryBrands, computeAll } from "@/lib/scoring";
 import { r1, sum } from "@/lib/format";
 import { namesBrand, reachSplit } from "@/lib/questions";
 import { gapSources, isTarget, KIND_LABELS } from "@/lib/sources";
@@ -112,6 +112,15 @@ export default function ReportView() {
     ...data.sov.map((s) => ({ player: s.player, mentions: s.mentions, me: false })),
   ].sort((a, b) => b.mentions - a.mentions);
   const sovTotal = sum(sovRows.map((s) => s.mentions));
+  // Share of voice v2 where answers have brand data: every brand the engines
+  // name on questions that don't name the client, recommendations double.
+  const named = categoryBrands(responses, brand.name);
+  const topNamed = named.slice(0, 8);
+  const meNamed = named.find((b) => b.client);
+  if (meNamed && !topNamed.includes(meNamed)) topNamed[topNamed.length - 1] = meNamed;
+  const shareRows = topNamed.length
+    ? topNamed.map((b) => ({ player: b.name, pct: Math.round(b.share), me: b.client }))
+    : sovRows.map((s) => ({ player: s.player, pct: pct(s.mentions, sovTotal), me: s.me }));
 
   // Biggest gaps: unbranded questions the client is missing from.
   const byPrompt = new Map<string, { named: number; n: number }>();
@@ -253,11 +262,11 @@ export default function ReportView() {
           )}
         </div>
         <div className="card">
-          <h3>Share of voice vs competitors</h3>
-          {sovRows.length > 1 ? (
+          <h3>{topNamed.length ? "Share of voice in AI answers" : "Share of voice vs competitors"}</h3>
+          {shareRows.length > 1 ? (
             <table>
               <tbody>
-                {sovRows.map((s) => (
+                {shareRows.map((s) => (
                   <tr key={s.player} style={s.me ? { fontWeight: 700 } : undefined}>
                     <td>{s.player}</td>
                     <td style={{ width: "45%" }}>
@@ -267,13 +276,13 @@ export default function ReportView() {
                             display: "block",
                             height: 8,
                             borderRadius: 4,
-                            width: pct(s.mentions, sovTotal) + "%",
+                            width: s.pct + "%",
                             background: s.me ? "var(--blue)" : "var(--muted)",
                           }}
                         />
                       </div>
                     </td>
-                    <td style={{ textAlign: "right" }}>{pct(s.mentions, sovTotal)}%</td>
+                    <td style={{ textAlign: "right" }}>{s.pct}%</td>
                   </tr>
                 ))}
               </tbody>
@@ -281,7 +290,11 @@ export default function ReportView() {
           ) : (
             <div className="muted">No competitors set up for this client.</div>
           )}
-          <div className="legend-note">Share of answers naming each company, among all those named.</div>
+          <div className="legend-note">
+            {topNamed.length
+              ? `Every company the AI engines name when buyers ask questions that don't mention ${brand.name}; a recommendation counts double. ${named.length} companies named in total.`
+              : "Share of answers naming each company, among the tracked competitors."}
+          </div>
         </div>
       </div>
 

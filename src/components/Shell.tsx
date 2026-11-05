@@ -65,6 +65,12 @@ export default function Shell() {
     jobs,
     startSnapshot,
     remeasure,
+    stopMeasuring,
+    measureNewQuestions,
+    unmeasured,
+    missingMeasurements,
+    liveEngineCount,
+    samples,
     signOut,
     toastMsg,
     toastShow,
@@ -233,6 +239,44 @@ export default function Shell() {
               <span className="chip chip-blue">
                 Measuring {jobs.length - inFlight} of {jobs.length}
               </span>
+            )}
+            {inFlight > 0 && !client && (
+              <button
+                type="button"
+                className="btn sm danger"
+                onClick={stopMeasuring}
+                title="Cancel the measurements still to run, to save AI credit"
+              >
+                ■ Stop
+              </button>
+            )}
+            {inFlight === 0 && !client && run?.method === "v2" && unmeasured.length > 0 && (
+              <>
+                <span
+                  className="chip chip-amber"
+                  title={unmeasured.map((p) => p.text).join("\n")}
+                >
+                  {unmeasured.length} question{unmeasured.length === 1 ? "" : "s"} not fully measured
+                </span>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Measure what's missing: ${missingMeasurements} measurement${
+                          missingMeasurements === 1 ? "" : "s"
+                        } across ${unmeasured.length} question${unmeasured.length === 1 ? "" : "s"} ` +
+                          `(${samples} samples each, ${liveEngineCount} live engines)? ` +
+                          "Uses AI credit; you can stop it at any time.",
+                      )
+                    )
+                      measureNewQuestions();
+                  }}
+                >
+                  {jobs.some((j) => j.status === "cancelled") ? "Resume" : "Measure now"}
+                </button>
+              </>
             )}
             {!client && (
               <span

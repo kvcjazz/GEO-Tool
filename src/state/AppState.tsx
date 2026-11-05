@@ -14,7 +14,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { callFn } from "@/lib/callFn";
 import { ClassifySourcesSchema, EngineStatusSchema } from "@/lib/schemas";
 import { gapSources } from "@/lib/sources";
-import { AREAS, CLIENT_AREAS, LEGACY_VIEWS, measuredOnly } from "@/lib/constants";
+import { AREAS, CLIENT_AREAS, ENGINES, LEGACY_VIEWS, measuredOnly } from "@/lib/constants";
 import { clientSlug, findClient, recentClients, rememberClient } from "@/lib/clientIdentity";
 import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
@@ -137,6 +137,14 @@ type Ctx = {
   remeasure: () => Promise<void>;
   /** Measure only questions the current check has no answers for yet. */
   measureNewQuestions: () => Promise<void>;
+  /** Cancel every queued or running measurement of the current check. */
+  stopMeasuring: () => Promise<void>;
+  /** Active questions missing an answer from at least one live engine in the current check. */
+  unmeasured: Prompt[];
+  /** Question × live-engine measurements missing from the current check. */
+  missingMeasurements: number;
+  /** Engines that will actually be asked (have a key). */
+  liveEngineCount: number;
 
   toast: (m: string) => void;
   toastMsg: string;
@@ -474,6 +482,38 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setJobsKey((k) => k + 1);
   }, [data.currentRun, samples, sb, toast]);
 
+  const stopMeasuring = useCallback(async () => {
+    const run = data.currentRun;
+    if (!run) return;
+    if (
+      !window.confirm(
+        "Stop measuring now? Measurements still waiting are cancelled straight away; ones " +
+          "already running finish but aren't saved. Use Resume later to measure only what's missing.",
+      )
+    )
+      return;
+    const { data: n, error } = await sb.rpc("geo_cancel_run", { rid: run.id });
+    if (error) return toast("Couldn't stop: " + error.message);
+    toast(n ? `Stopped — ${n} measurements cancelled` : "Nothing was running");
+    setJobsKey((k) => k + 1);
+    await reload();
+  }, [data.currentRun, sb, toast, reload]);
+
+  const liveEngineList = useMemo(() => ENGINES.filter((e) => engines[e]), [engines]);
+  const liveEngineCount = liveEngineList.length;
+  const { unmeasured, missingMeasurements } = useMemo(() => {
+    if (!data.currentRun) return { unmeasured: [] as Prompt[], missingMeasurements: 0 };
+    const answered = new Set(data.responses.map((r) => r.prompt_id + "|" + r.engine));
+    let missing = 0;
+    const list = data.prompts.filter((p) => {
+      if (!p.active) return false;
+      const n = liveEngineList.filter((e) => !answered.has(p.id + "|" + e)).length;
+      missing += n;
+      return n > 0;
+    });
+    return { unmeasured: list, missingMeasurements: missing };
+  }, [data.currentRun, data.responses, data.prompts, liveEngineList]);
+
   // ---- Cited-site classification --------------------------------------------
   // The sites answers cite are classified once per client (competitor,
   // publication, directory…) so competitors drop out of "where to earn
@@ -711,6 +751,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     startSnapshot,
     remeasure,
     measureNewQuestions,
+    stopMeasuring,
+    unmeasured,
+    missingMeasurements,
+    liveEngineCount,
     setSourceKind,
     mergeTargets,
     classifying,

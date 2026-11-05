@@ -4,6 +4,7 @@ import { ctxString } from "./context";
 import { factSheetText } from "./factSheet";
 import { namesBrand, reachSplit } from "./questions";
 import { gapSources, isTarget, KIND_LABELS } from "./sources";
+import { categoryBrands } from "./scoring";
 
 // Everything the AI strategist should weigh when it suggests questions or
 // tailors an action: the team's strategy and PR profile, what the client told
@@ -50,6 +51,8 @@ export type AdviseBrief = {
     new_buyer_reach_pct: number;
     by_name_reach_pct: number;
     engine_mention_pct: Record<string, number>;
+    /** Every brand the engines name on questions that don't name the client, by share of voice. */
+    brands_named: { name: string; share_pct: number; recommended_in: number; is_client: boolean }[];
     /** Sites cited in answers that left the client out — where coverage is missing. */
     gap_sources: { domain: string; kind: string | null; citations: number }[];
   };
@@ -137,6 +140,14 @@ export function buildAdviseBrief(brand: Brand, data: BrandData): AdviseBrief {
             new_buyer_reach_pct: reach.newBuyers.pct,
             by_name_reach_pct: reach.byName.pct,
             engine_mention_pct: engineMentionPct(responses),
+            brands_named: categoryBrands(responses, brand.name)
+              .slice(0, 15)
+              .map((b) => ({
+                name: b.name,
+                share_pct: Math.round(b.share),
+                recommended_in: b.recommended,
+                is_client: b.client,
+              })),
             gap_sources: gapSources(brand, responses)
               .filter((s) => isTarget(s.domain, data.sourceKinds))
               .slice(0, 20)

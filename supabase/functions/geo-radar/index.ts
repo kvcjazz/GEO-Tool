@@ -36,6 +36,7 @@ type Brief = {
     new_buyer_reach_pct?: number;
     by_name_reach_pct?: number;
     engine_mention_pct?: Record<string, number>;
+    brands_named?: { name: string; share_pct: number; recommended_in: number; is_client: boolean }[];
     gap_sources?: { domain: string; kind?: string | null; citations: number }[];
   } | null;
   competitors?: { name: string; mentions_last_check?: number | null }[];
@@ -100,6 +101,16 @@ function evidenceBlock(br: Brief | undefined): string {
     );
     const eng = Object.entries(lc.engine_mention_pct || {}).sort((a, b) => a[1] - b[1]);
     if (eng.length) parts.push("Named by engine: " + eng.map(([e, p]) => `${e} ${p}%`).join(", ") + ".");
+    if (lc.brands_named?.length) {
+      parts.push(
+        "Share of voice — every brand the engines name on buyer questions that don't name the client " +
+          "(recommendations count double): " +
+          lc.brands_named
+            .slice(0, 10)
+            .map((b) => `${b.is_client ? "**" + b.name + "**" : b.name} ${b.share_pct}%`)
+            .join(", ") + ".",
+      );
+    }
     if (lc.gap_sources?.length) {
       parts.push(
         "Sites the AI engines cite in answers that leave the client out (most cited first) — " +

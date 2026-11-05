@@ -15,6 +15,7 @@ import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
+import CategoryBrandsPanel from "@/components/CategoryBrandsPanel";
 import { setupSteps } from "@/lib/setup";
 import { FACT_FIELDS, MARKETS, factSheetOf, type FactSheet } from "@/lib/factSheet";
 import type { Prompt } from "@/lib/types";
@@ -41,6 +42,8 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     setSamples,
     engines,
     archivedBrands,
+    measureNewQuestions,
+    liveEngineCount,
   } = useAppState();
 
   const [strategy, setStrategy] = useState({
@@ -290,6 +293,27 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     setNewPrompt("");
     toast("Question added");
     await reload();
+    offerToMeasure(1);
+  }
+
+  /**
+   * New questions only get answers when they're measured. Offer to measure
+   * them now rather than leaving them blank until next month's check.
+   */
+  function offerToMeasure(n: number) {
+    const run = data.currentRun;
+    if (!run || run.method !== "v2" || !liveEngineCount) return;
+    const total = n * liveEngineCount;
+    if (
+      window.confirm(
+        `Measure the ${n} new question${n === 1 ? "" : "s"} now, so ${
+          n === 1 ? "it shows" : "they show"
+        } in this month's AI answers? That's ${total} measurement${total === 1 ? "" : "s"} ` +
+          `(${liveEngineCount} engines, ${samples} samples each) and uses AI credit — you can stop ` +
+          "it at any time. Choose Cancel to wait for the next monthly check.",
+      )
+    )
+      measureNewQuestions();
   }
 
   async function delPrompt(id: string) {
@@ -342,6 +366,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     setSugg([]);
     toast(rows.length + " questions added");
     await reload();
+    offerToMeasure(rows.length);
   }
 
   async function addContext() {
@@ -734,6 +759,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
             </button>
           </div>
         </div>
+        <CategoryBrandsPanel />
         </div>
         <div id="setup-questions" className="setup-section">
         {/* Prompt set */}

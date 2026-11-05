@@ -154,3 +154,12 @@ export const TargetsResponseSchema = z.object({
   detail: z.string().nullish(),
 });
 export type TargetVerdict = z.infer<typeof TargetVerdictSchema>;
+
+// geo-entities (brand extraction backfill)
+export const EntitiesResponseSchema = z.object({
+  ok: z.boolean(),
+  processed: z.number().nullish(),
+  remaining: z.number().nullish(),
+  errors: z.array(z.string()).nullish(),
+  error: z.string().nullish(),
+});
