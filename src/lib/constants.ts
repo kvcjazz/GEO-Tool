@@ -97,7 +97,7 @@ export const METRIC_LABELS: Record<keyof MetricWeights, string> = {
 // prove impact — plus Setup and Admin. Each area says what question it answers
 // and what to do there, so nobody has to guess what a tab is for.
 
-export type AreaId = "overview" | "answers" | "plan" | "coverage" | "setup" | "admin";
+export type AreaId = "overview" | "answers" | "plan" | "coverage" | "report" | "setup" | "admin";
 
 /** The main button in an area's page header. */
 export type AreaAction = "snapshot" | "remeasure" | "logPlacement";
@@ -196,6 +196,16 @@ export const AREAS: Area[] = [
     question: "Is our PR coverage being cited by the AI engines?",
     todo: "Log each placement — the tool checks every AI answer for it automatically.",
     action: { kind: "logPlacement", label: "Log a placement" },
+  },
+  {
+    id: "report",
+    label: "Monthly report",
+    desc: "Client-ready summary to send",
+    group: "cycle",
+    client: true,
+    question: "How visible is this client in AI answers this month, what changed, and is the PR working?",
+    clientQuestion: "Your AI visibility this month, what changed, and what PR is doing about it.",
+    todo: "Read it through after each monthly check, then Print / save as PDF and send it to the client.",
   },
   {
     id: "setup",

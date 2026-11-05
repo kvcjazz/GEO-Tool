@@ -928,3 +928,42 @@ td input {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Monthly client report */
+.report .card {
+  margin-bottom: 16px;
+}
+.report ul {
+  margin: 6px 0 0 18px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.report-head h2 {
+  font-size: 24px;
+}
+@media print {
+  .sidebar,
+  .topbar,
+  .page-head,
+  .present-banner,
+  .area-tabs,
+  .tab-hint,
+  .toast,
+  .no-print {
+    display: none !important;
+  }
+  .main {
+    margin-left: 0 !important;
+  }
+  .content {
+    padding: 0 !important;
+  }
+  .report .card {
+    break-inside: avoid;
+    box-shadow: none;
+  }
+  body {
+    background: #fff;
+  }
+}

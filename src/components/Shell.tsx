@@ -13,6 +13,7 @@ import PRView from "@/views/PRView";
 import ListeningView from "@/views/ListeningView";
 import SettingsView from "@/views/SettingsView";
 import TargetsView from "@/views/TargetsView";
+import ReportView from "@/views/ReportView";
 
 /** What renders for each area (and tab, where an area has tabs). */
 function AreaBody({ area, tab }: { area: string; tab: string }) {
@@ -23,6 +24,8 @@ function AreaBody({ area, tab }: { area: string; tab: string }) {
       return tab === "actions" ? <BacklogView /> : tab === "titles" ? <TargetsView /> : <PlanningView />;
     case "coverage":
       return <PRView />;
+    case "report":
+      return <ReportView />;
     case "setup":
       return <SettingsView section="setup" />;
     case "admin":

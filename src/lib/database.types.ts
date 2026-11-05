@@ -2523,6 +2523,19 @@ export type Database = {
         Returns: number
       }
       geo_start_snapshot: { Args: { bid: string; p_samples?: number }; Returns: string }
+      geo_v2_answers: {
+        Args: { bid: string }
+        Returns: {
+          run_id: string
+          run_date: string
+          run_created: string
+          prompt_id: string
+          engine: string
+          mentioned: boolean
+          cited_sources: string | null
+          urls: string[]
+        }[]
+      }
       log_admin_time: {
         Args: { p_action_key: string; p_client_id: string }
         Returns: undefined
