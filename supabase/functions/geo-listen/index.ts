@@ -13,6 +13,7 @@
 // sends the x-geo-cron header holding the geo_cron_secret Vault secret
 // (checked with geo_cron_secret_ok, callable by the service role only).
 import {
+  callAnalyst,
   callModel,
   CORS,
   domainOf,
@@ -21,7 +22,6 @@ import {
   json,
   liveEngines,
   parseStringArray,
-  type ProviderId,
 } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 import { evidenceFor, names, type Named } from "../_shared/measure.ts";
@@ -97,10 +97,7 @@ function templateQuestions(b: Brand): string[] {
   return ps.slice(0, 6);
 }
 
-async function makeQuestions(b: Brand, provider: ProviderId | null): Promise<string[]> {
-  if (!provider) return templateQuestions(b);
-  const key = envKey(provider);
-  if (!key) return templateQuestions(b);
+async function makeQuestions(b: Brand): Promise<string[]> {
   const prompt = 'A company called "' + b.name + '" operates in this space. Sector: ' +
     (b.sector || "") + ". Themes: " + (b.themes || "") + ". Positioning: " +
     (b.positioning || "") + ". Audience: " + (b.pr_persona || b.audience || "") +
@@ -110,7 +107,7 @@ async function makeQuestions(b: Brand, provider: ProviderId | null): Promise<str
     "this exact space and market. Be specific to the real category (name the precise " +
     'field or sub-sector), NOT generic. Do NOT mention "' + b.name + '" in any question. ' +
     "Return ONLY a JSON array of 6 question strings.";
-  const out = await callModel(provider, key, prompt, 800);
+  const out = await callAnalyst(prompt, 800);
   const arr = parseStringArray(out.text);
   if (arr && arr.length >= 3) return arr.slice(0, 6);
   return templateQuestions(b);
@@ -158,9 +155,7 @@ Deno.serve(async (req: Request) => {
     const engines = liveEngines();
     if (!engines.length) return json({ ok: false, error: "no_keys" });
 
-    // Prefer Claude for question generation, else whichever engine is live.
-    const questionProvider = envKey("anthropic") ? "anthropic" as ProviderId : ENGINE_PROVIDER[engines[0]];
-    const questions = await makeQuestions(brand, questionProvider);
+    const questions = await makeQuestions(brand);
     const who: Named = { name: brand.name, aliases: brand.aliases || [] };
 
     // Every engine × question side by side: searched answers are slow.

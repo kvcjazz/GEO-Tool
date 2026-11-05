@@ -11,7 +11,7 @@
 //
 // News comes from Google News RSS (see _shared/news.ts). AI failures fall back
 // to a template and say why (`source: "template"`, `note`).
-import { callModel, CORS, countryCode, envKey, json, parseJson } from "../_shared/providers.ts";
+import { callAnalyst, CORS, countryCode, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 import { competitorNews, themeNews, type Article } from "../_shared/news.ts";
 
@@ -286,18 +286,7 @@ Deno.serve(async (req: Request) => {
   const compNews = comp.articles;
   const newsError = theme.error || comp.error;
 
-  const key = envKey("anthropic");
-  if (!key) {
-    return json({
-      items: template(b, news),
-      news,
-      competitorNews: compNews,
-      source: "template",
-      note: "ANTHROPIC_API_KEY is not set",
-      newsError,
-    });
-  }
-  const out = await callModel("anthropic", key, prompt(b, news, compNews), 8000);
+  const out = await callAnalyst(prompt(b, news, compNews), 8000);
   const parsed = out.error ? null : parseJson<{ items?: Record<string, unknown>[] }>(out.text);
   if (!parsed?.items?.length) {
     return json({
@@ -320,5 +309,13 @@ Deno.serve(async (req: Request) => {
     geo_metric: String(p.geo_metric || ""),
     feasibility: ["High", "Medium", "Low"].includes(String(p.feasibility)) ? String(p.feasibility) : "Medium",
   })).filter((i) => i.title);
-  return json({ items, news, competitorNews: compNews, source: "ai", model: out.model, newsError });
+  return json({
+    items,
+    news,
+    competitorNews: compNews,
+    source: "ai",
+    model: out.model,
+    fellBackFrom: out.fellBackFrom,
+    newsError,
+  });
 });

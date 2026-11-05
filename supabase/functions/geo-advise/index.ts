@@ -16,7 +16,7 @@
 //
 // Failures are reported, never hidden: "suggest" returns { error } instead of
 // template questions, and "tailor" returns its template with `error` set.
-import { callModel, CORS, envKey, json, parseJson } from "../_shared/providers.ts";
+import { callAnalyst, CORS, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 
 const PTYPES = ["Category", "Comparison", "Brand/Entity", "Problem-led", "Buying-intent"];
@@ -162,12 +162,8 @@ type Suggestion = {
 async function suggest(body: Body): Promise<Response> {
   const br = briefOf(body);
   if (!br.client?.name) return json({ error: "No client given." }, 400);
-  const key = envKey("anthropic");
-  if (!key) {
-    return json({ error: "ANTHROPIC_API_KEY is not set in Supabase edge-function secrets." }, 503);
-  }
   const count = Math.max(4, Math.min(20, Math.round(Number(body.count) || 12)));
-  const out = await callModel("anthropic", key, suggestPrompt(br, count), 8000);
+  const out = await callAnalyst(suggestPrompt(br, count), 8000);
   if (out.error) return json({ error: "The AI model call failed: " + out.error }, 502);
 
   const parsed = parseJson<{ note?: string; prompts?: Record<string, unknown>[] }>(out.text);
@@ -197,7 +193,7 @@ async function suggest(body: Body): Promise<Response> {
     });
   }
   prompts.sort((a, b) => b.impact - a.impact);
-  return json({ prompts, note: parsed.note || null, source: "ai", model: out.model });
+  return json({ prompts, note: parsed.note || null, source: "ai", model: out.model, fellBackFrom: out.fellBackFrom });
 }
 
 function tailorTemplate(b: Body, br: Brief): string {
@@ -234,15 +230,7 @@ function tailorPrompt(b: Body, br: Brief): string {
 
 async function tailor(body: Body): Promise<Response> {
   const br = briefOf(body);
-  const key = envKey("anthropic");
-  if (!key) {
-    return json({
-      guidance: tailorTemplate(body, br),
-      source: "template",
-      error: "ANTHROPIC_API_KEY is not set — showing the generic template.",
-    });
-  }
-  const out = await callModel("anthropic", key, tailorPrompt(body, br), 1500);
+  const out = await callAnalyst(tailorPrompt(body, br), 1500);
   if (out.error || !out.text.trim()) {
     return json({
       guidance: tailorTemplate(body, br),

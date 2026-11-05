@@ -211,8 +211,18 @@ function isModelUnavailable(status: number, message: string): boolean {
  * model chain twice over.
  */
 function isBillingBlock(message: string): boolean {
-  return /(insufficient_quota|exceeded your current quota|quota|billing|payment required|credit balance|no credits)/i
+  return /(insufficient_quota|exceeded your current quota|quota|billing|payment required|credit balance|no credits|usage limits?)/i
     .test(message || "");
+}
+
+/** Plain-English fix for an account-level block, by kind. */
+function billingAdvice(provider: ProviderId, message: string): string {
+  if (/usage limits?/i.test(message)) {
+    return `the ${provider} account has reached the monthly spend limit set on it — ` +
+      `raise the limit in that provider's console (Anthropic: Settings → Limits)`;
+  }
+  return `${KEY_ENV[provider]} is valid but the ${provider} account has no credit/quota — ` +
+    `add billing with that provider`;
 }
 
 function errText(status: number, payload: unknown): string {
@@ -533,8 +543,7 @@ export async function callModel(
           citations: [],
           model,
           searched,
-          error: `${KEY_ENV[provider]} is valid but the ${provider} account has no ` +
-            `credit/quota — add billing with that provider. (${a.message})`,
+          error: `${billingAdvice(provider, a.message)}. (${a.message})`,
         };
       }
       if (isModelUnavailable(a.status, a.message)) break; // next model id
@@ -573,6 +582,41 @@ async function searchFallback(
 ): Promise<ModelResult> {
   const plain = await callModel(provider, key, prompt, maxTokens);
   return { ...plain, searched: false, searchError: searchError || "search unavailable" };
+}
+
+/**
+ * Providers used for analysis (suggestions, Radar, titles, source types,
+ * listening questions), in order of preference. Measurement never uses this:
+ * each engine must be asked through its own provider.
+ */
+export const ANALYST_ORDER: ProviderId[] = ["anthropic", "openai", "gemini"];
+
+/**
+ * Runs an analysis prompt on the first provider in ANALYST_ORDER that has a
+ * key and answers, so one account being out of credit or over its spend limit
+ * doesn't stop the tool. `fellBackFrom` lists the providers that failed first.
+ */
+export async function callAnalyst(
+  prompt: string,
+  maxTokens = 4000,
+): Promise<ModelResult & { provider?: ProviderId; fellBackFrom?: string }> {
+  const errors: string[] = [];
+  for (const provider of ANALYST_ORDER) {
+    const key = envKey(provider);
+    if (!key) continue;
+    const out = await callModel(provider, key, prompt, maxTokens);
+    if (!out.error && out.text.trim()) {
+      return { ...out, provider, fellBackFrom: errors.length ? errors.join(" | ") : undefined };
+    }
+    errors.push(`${provider}: ${out.error || "empty reply"}`);
+  }
+  return {
+    text: "",
+    citations: [],
+    model: "",
+    searched: false,
+    error: errors.length ? errors.join(" | ") : "No AI provider key is set in the edge-function secrets",
+  };
 }
 
 /** Pull the first JSON object out of a model reply, tolerating code fences. */

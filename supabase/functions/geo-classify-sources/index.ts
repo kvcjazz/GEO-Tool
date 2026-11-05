@@ -2,9 +2,9 @@
 // "Where to earn coverage" can leave out competitors: a PR agency won't be
 // covered on another agency's blog, however often the engines cite it.
 //
-// One Claude call (no web search) for up to 60 domains; the app saves the
+// One AI call (Claude, falling back to OpenAI/Gemini; no web search) for up to 60 domains; the app saves the
 // answers in geo_source_kinds and the team can override any of them.
-import { callModel, CORS, envKey, json, parseJson } from "../_shared/providers.ts";
+import { callAnalyst, CORS, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 
 const KINDS = ["competitor", "media", "directory", "review", "community", "academic", "other"];
@@ -56,10 +56,7 @@ Deno.serve(async (req: Request) => {
   if (!body.brand || !domains.length) {
     return json({ ok: false, error: "brand and domains required" });
   }
-  const key = envKey("anthropic");
-  if (!key) return json({ ok: false, error: "no_key", detail: "Missing ANTHROPIC_API_KEY" });
-
-  const out = await callModel("anthropic", key, prompt(body, domains), 4000);
+  const out = await callAnalyst(prompt(body, domains), 4000);
   if (out.error) return json({ ok: false, error: "call_failed", detail: out.error });
   const parsed = parseJson<{ sites?: { domain?: string; kind?: string; label?: string }[] }>(
     out.text,

@@ -10,7 +10,7 @@
 // One Claude call (no web search). The app saves the result in
 // geo_target_titles; the team's calls (relationship / no-go) come back in on
 // the next review.
-import { callModel, CORS, envKey, json, parseJson } from "../_shared/providers.ts";
+import { callAnalyst, CORS, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 
 const VERDICTS = ["realistic", "stretch", "not_realistic"];
@@ -195,10 +195,8 @@ Deno.serve(async (req: Request) => {
   if (!body.brand || !candidates.length) {
     return json({ ok: false, error: "brand and candidates required" });
   }
-  const key = envKey("anthropic");
-  if (!key) return json({ ok: false, error: "no_key", detail: "Missing ANTHROPIC_API_KEY" });
 
-  const out = await callModel("anthropic", key, prompt(body, candidates), 8000);
+  const out = await callAnalyst(prompt(body, candidates), 8000);
   if (out.error) return json({ ok: false, error: "call_failed", detail: out.error });
   const parsed = parseJson<{ titles?: Record<string, unknown>[] }>(out.text);
   if (!parsed?.titles) {
