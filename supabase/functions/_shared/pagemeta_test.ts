@@ -49,3 +49,24 @@ Deno.test("domain-style site name loses to the title's publication; entities dec
     "TechRadar",
   );
 });
+
+import { cleanOutlet, matchesDomain } from "./pagemeta.ts";
+
+Deno.test("publication names are matched to their site", () => {
+  for (const [n, d] of [
+    ["Reinsurance News", "reinsurancene.ws"],
+    ["Yahoo Finance", "finance.yahoo.com"],
+    ["New York Stock Exchange", "tv.nyse.com"],
+    ["MSN", "msn.com"],
+    ["Insurance Business", "insurancebusinessmag.com"],
+    ["CFOtech Asia", "cfotech.news"],
+  ]) assertEquals(matchesDomain(n, d), true, n);
+  assertEquals(matchesDomain("FF News", "insurtecheye.com"), false);
+  assertEquals(matchesDomain("SCM", "informationweek.com"), false);
+  assertEquals(cleanOutlet("Coverager - Insurance news and insights", "coverager.com"), "Coverager");
+  assertEquals(cleanOutlet("Insurtech Eye | Insurance & Risk Intelligence", "insurtecheye.com"), "Insurtech Eye");
+});
+
+Deno.test("a holding page's site-name title is not a headline", () => {
+  assertEquals(parsePage('<title>MSN</title><meta property="og:site_name" content="MSN">', "https://www.msn.com/x").headline, null);
+});

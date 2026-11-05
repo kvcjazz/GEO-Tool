@@ -35,6 +35,7 @@ export function repairPatch(
 ): Partial<Pick<Placement, "outlet" | "headline" | "activity_date">> | null {
   const patch: Partial<Pick<Placement, "outlet" | "headline" | "activity_date">> = {};
   const wrong = outletLooksWrong(p, f);
+  const oldWasHeadline = words(p.outlet) > 5;
   if (wrong) {
     // Best name available: the page's, else the " - Publication" suffix of the
     // stored text, else whatever the lookup found (AI or site name).
@@ -42,10 +43,20 @@ export function repairPatch(
     const name = f?.outlet_from === "page" || f?.outlet_from === "headline" ? f.outlet : suffix || f?.outlet;
     if (name && !same(name, p.outlet)) {
       patch.outlet = name.slice(0, 80);
-      if (!p.headline) patch.headline = f?.headline || splitTitle(p.outlet).headline || p.outlet;
+      // The stored text was the sheet's headline: keep it as the headline.
+      if (!p.headline) {
+        patch.headline = oldWasHeadline ? splitTitle(p.outlet).headline : f?.headline || null;
+      }
     }
+  } else if (f?.outlet && f.outlet_from === "ai" && !same(f.outlet, p.outlet)) {
+    // The lookup found that the stored name belongs to another site (a parent
+    // brand in the page metadata) and named the right publication.
+    patch.outlet = f.outlet;
   }
   if (!p.headline && !patch.headline && f?.headline) patch.headline = f.headline;
+  // A headline is never just the publication's name.
+  const finalOutlet = patch.outlet || p.outlet;
+  if (patch.headline && same(patch.headline, finalOutlet)) delete patch.headline;
   // Only dates that were just the day the piece was logged are replaced.
   if (f?.date && p.activity_date === p.created_at.slice(0, 10) && f.date !== p.activity_date) {
     patch.activity_date = f.date;

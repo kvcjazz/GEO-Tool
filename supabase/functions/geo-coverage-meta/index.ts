@@ -20,7 +20,14 @@
 // works; every path checks auth itself.
 import { callAnalyst, CORS, domainOf, json, parseJson } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
-import { dateFromUrl, parsePage, splitTitle, type PageMeta } from "../_shared/pagemeta.ts";
+import {
+  cleanOutlet,
+  dateFromUrl,
+  matchesDomain,
+  parsePage,
+  splitTitle,
+  type PageMeta,
+} from "../_shared/pagemeta.ts";
 import { repairPatch, type Placement } from "../_shared/coverage.ts";
 
 type Item = PageMeta & { url: string; outlet_from: "page" | "headline" | "ai" | "site" };
@@ -115,6 +122,7 @@ async function resolve(urls: string[], headlines: Record<string, string>): Promi
           outlet = sheet.outlet;
           outlet_from = "headline";
         }
+        if (outlet) outlet = cleanOutlet(outlet, domainOf(url));
         items[i] = {
           url,
           outlet,
@@ -126,8 +134,10 @@ async function resolve(urls: string[], headlines: Record<string, string>): Promi
     }),
   );
 
-  // One AI call names the publications behind the sites still unknown.
-  const unknown = [...new Set(items.filter((x) => !x.outlet).map((x) => domainOf(x.url)).filter(Boolean))];
+  // One AI call names the publications behind the sites still unknown, and
+  // behind sites whose page names a different brand (a parent company).
+  const doubtful = (x: Item) => !x.outlet || !matchesDomain(x.outlet, domainOf(x.url));
+  const unknown = [...new Set(items.filter(doubtful).map((x) => domainOf(x.url)).filter(Boolean))];
   if (unknown.length) {
     const out = await callAnalyst(
       "For each website domain below, give the name of the publication or site as its readers " +
@@ -142,10 +152,16 @@ async function resolve(urls: string[], headlines: Record<string, string>): Promi
       (parsed?.sites || []).map((s) => [String(s.domain || "").toLowerCase().replace(/^www\./, ""), String(s.name || "").trim()]),
     );
     for (const it of items) {
-      if (it.outlet) continue;
+      if (!doubtful(it)) continue;
       const d = domainOf(it.url);
       const n = names.get(d);
-      if (n) {
+      if (it.outlet) {
+        // Replace a mismatching page name only with one that fits the site.
+        if (n && matchesDomain(n, d)) {
+          it.outlet = n.slice(0, 80);
+          it.outlet_from = "ai";
+        }
+      } else if (n) {
         it.outlet = n.slice(0, 80);
         it.outlet_from = "ai";
       } else {

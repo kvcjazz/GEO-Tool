@@ -46,3 +46,20 @@ Deno.test("site title stored as publication ('Insurtech Eye | Insurance & Risk I
     { outlet: "Insurtech Eye" },
   );
 });
+
+Deno.test("sheet headline kept when the page only gives the site name; never headline = publication", () => {
+  assertEquals(
+    repairPatch(
+      { ...base, outlet: "Data: Nearly 80% of homeowners unprepared for extreme weather repairs" },
+      { outlet: "MSN", headline: null, date: null, outlet_from: "page" },
+    ),
+    { outlet: "MSN", headline: "Data: Nearly 80% of homeowners unprepared for extreme weather repairs" },
+  );
+});
+
+Deno.test("parent-brand name replaced when the lookup names the right publication", () => {
+  assertEquals(
+    repairPatch({ ...base, outlet: "FF News", headline: "x" }, { outlet: "Insurtech Eye", headline: "x", date: null, outlet_from: "ai" }),
+    { outlet: "Insurtech Eye" },
+  );
+});

@@ -351,7 +351,17 @@ export default function PRView() {
                 const remembered = tiers.get(host(i.pr.url || ""));
                 return (
                   <tr key={i.pr.id}>
-                    <td style={{ whiteSpace: "nowrap" }}>{i.pr.activity_date}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {i.pr.activity_date}
+                      {!ro && i.pr.url && i.pr.activity_date === (i.pr.created_at || "").slice(0, 10) && (
+                        <span
+                          title="This is the day the piece was logged — the article's own date couldn't be read. Use Edit to correct it."
+                          style={{ color: "var(--amber)", marginLeft: 4, cursor: "help" }}
+                        >
+                          ⚠
+                        </span>
+                      )}
+                    </td>
                     <td>
                       {i.pr.url ? (
                         <a href={i.pr.url} target="_blank" rel="noreferrer">

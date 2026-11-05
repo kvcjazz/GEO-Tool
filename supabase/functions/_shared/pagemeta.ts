@@ -106,6 +106,33 @@ export function splitTitle(title: string): { headline: string; outlet: string | 
   return { headline: t, outlet: null };
 }
 
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const SKIP = new Set(["www", "com", "co", "uk", "net", "org", "news", "info", "io", "us", "eng", "tv", "en", "m"]);
+
+/**
+ * True when a publication name plausibly belongs to the site: "Reinsurance
+ * News" ↔ reinsurancene.ws, "Yahoo Finance" ↔ finance.yahoo.com, "New York
+ * Stock Exchange" ↔ nyse.com. False for a parent brand like "FF News" on
+ * insurtecheye.com.
+ */
+export function matchesDomain(name: string, domain: string): boolean {
+  const n = squash(name);
+  if (!n) return false;
+  const labels = domain.toLowerCase().split(".").filter((l) => l.length >= 3 && !SKIP.has(l));
+  const initials = name.split(/[\s&-]+/).filter(Boolean).map((w) => w[0]).join("").toLowerCase();
+  return labels.some((l) => {
+    const b = squash(l);
+    return n.includes(b) || b.includes(n) || (initials.length >= 3 && b.startsWith(initials));
+  });
+}
+
+/** "Coverager - Insurance news and insights" → "Coverager" for coverager.com. */
+export function cleanOutlet(name: string, domain: string): string {
+  const parts = name.split(/\s+(?:[|\-–—•:]|::)\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return name.trim();
+  return parts.find((p) => matchesDomain(p, domain)) || parts[0];
+}
+
 /** Reads publication, headline and date from an article page's HTML. */
 export function parsePage(html: string, url: string): PageMeta {
   const nodes = ldNodes(html);
@@ -127,7 +154,9 @@ export function parsePage(html: string, url: string): PageMeta {
   // publication name in the page title ("… - Reinsurance News").
   if (/^[\w-]+(\.[\w-]+)+$/.test(outlet) && fromTitle.outlet) outlet = fromTitle.outlet;
 
-  const headline = ldHeadline || splitTitle(ogTitle || titleTag || "").headline || null;
+  let headline: string | null = ldHeadline || splitTitle(ogTitle || titleTag || "").headline || null;
+  // A consent or holding page often has only the site's name as its title.
+  if (headline && (squash(headline) === squash(outlet) || squash(headline) === squash(site || ""))) headline = null;
   const date = isoDay(String(art.datePublished || "")) ||
     isoDay(meta(html, ["article:published_time", "og:published_time", "datepublished", "date", "dc.date", "pubdate", "publish-date", "sailthru.date", "parsely-pub-date"])) ||
     isoDay(/<time[^>]+datetime\s*=\s*["']([^"']+)["']/i.exec(html)?.[1]) ||
