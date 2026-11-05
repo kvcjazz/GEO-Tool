@@ -92,3 +92,11 @@ reused untouched.
   Overview headline "Found by new buyers" vs "Recognised by name", Answers
   grouped by question with "Review / override" for edits, Sources "Add to
   plan", accepted ideas go straight into the one action plan.
+
+## 2026-11-05 — Fix "delete client"
+
+- Deleting a client failed with an FK violation on `geo_media_targets`
+  (also latent on `geo_radar_items`, `geo_news`). Those FKs now cascade and
+  `geo_delete_brand` clears every brand-linked table. Applied live via
+  migration `geo_delete_brand_fix_fk_cascade`; SQL kept in
+  `supabase/migrations/20261105120000_geo_delete_brand_fix_fk_cascade.sql`.
