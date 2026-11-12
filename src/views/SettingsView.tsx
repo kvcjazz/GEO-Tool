@@ -15,6 +15,7 @@ import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
+import AiSpendPanel from "@/components/AiSpendPanel";
 import CategoryBrandsPanel from "@/components/CategoryBrandsPanel";
 import { setupSteps } from "@/lib/setup";
 import { SeoChip } from "@/components/ui";
@@ -53,6 +54,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     engines,
     archivedBrands,
     measureNewQuestions,
+    missingMeasurements,
     liveEngineCount,
   } = useAppState();
 
@@ -335,13 +337,17 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
   function offerToMeasure(n: number) {
     const run = data.currentRun;
     if (!run || run.method !== "v2" || !liveEngineCount) return;
-    const total = n * liveEngineCount;
+    // "Measure now" fills every gap in the check, so anything already missing
+    // (failed or stopped measurements) is measured too: say so in the total.
+    const others = missingMeasurements;
+    const total = n * liveEngineCount + others;
     if (
       window.confirm(
         `Measure the ${n} new question${n === 1 ? "" : "s"} now, so ${
           n === 1 ? "it shows" : "they show"
         } in this month's AI answers? That's ${total} measurement${total === 1 ? "" : "s"} ` +
-          `(${liveEngineCount} engines, ${samples} samples each) and uses AI credit — you can stop ` +
+          (others ? `(including ${others} already missing from this check) ` : "") +
+          `on ${liveEngineCount} engines, ${samples} samples each, and uses AI credit — you can stop ` +
           "it at any time. Choose Cancel to wait for the next monthly check.",
       )
     )
@@ -1595,6 +1601,8 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           </div>
       {/* Users & access (account-wide) */}
       <UsersAdmin />
+      {/* AI spend (account-wide, admins) */}
+      <AiSpendPanel />
           <div className="set-grid" style={{ marginBottom: 16 }}>
         {/* Metric weights */}
         <div className="card">

@@ -796,6 +796,81 @@ export type Database = {
         }
         Relationships: []
       }
+      geo_ai_rates: {
+        Row: {
+          model_prefix: string
+          provider: string
+          updated_at: string
+          usd_per_m_input: number
+          usd_per_m_output: number
+          usd_per_search: number
+        }
+        Insert: {
+          model_prefix?: string
+          provider: string
+          updated_at?: string
+          usd_per_m_input?: number
+          usd_per_m_output?: number
+          usd_per_search?: number
+        }
+        Update: {
+          model_prefix?: string
+          provider?: string
+          updated_at?: string
+          usd_per_m_input?: number
+          usd_per_m_output?: number
+          usd_per_search?: number
+        }
+        Relationships: []
+      }
+      geo_ai_usage: {
+        Row: {
+          brand_id: string | null
+          created_at: string
+          error: string | null
+          fn: string
+          id: number
+          input_tokens: number
+          model: string | null
+          ok: boolean
+          output_tokens: number
+          provider: string
+          purpose: string
+          reported_cost_usd: number | null
+          searches: number
+        }
+        Insert: {
+          brand_id?: string | null
+          created_at?: string
+          error?: string | null
+          fn: string
+          id?: never
+          input_tokens?: number
+          model?: string | null
+          ok?: boolean
+          output_tokens?: number
+          provider: string
+          purpose: string
+          reported_cost_usd?: number | null
+          searches?: number
+        }
+        Update: {
+          brand_id?: string | null
+          created_at?: string
+          error?: string | null
+          fn?: string
+          id?: never
+          input_tokens?: number
+          model?: string | null
+          ok?: boolean
+          output_tokens?: number
+          provider?: string
+          purpose?: string
+          reported_cost_usd?: number | null
+          searches?: number
+        }
+        Relationships: []
+      }
       geo_brands: {
         Row: {
           aliases: string[]
@@ -2613,6 +2688,23 @@ export type Database = {
     }
     Functions: {
       geo_delete_brand: { Args: { bid: string }; Returns: undefined }
+      geo_ai_usage_summary: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          month: string
+          brand_id: string | null
+          fn: string
+          purpose: string
+          provider: string
+          model: string
+          calls: number
+          failed: number
+          input_tokens: number
+          output_tokens: number
+          searches: number
+          reported_cost_usd: number | null
+        }[]
+      }
       geo_cancel_run: { Args: { rid: string }; Returns: number }
       geo_enqueue_run: {
         Args: { p_only_new?: boolean; p_samples?: number; rid: string }

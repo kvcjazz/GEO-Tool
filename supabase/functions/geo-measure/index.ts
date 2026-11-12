@@ -12,8 +12,12 @@
 //      are worked out in code from the answer text and citations
 //      (_shared/measure.ts), so they are exact and repeatable.
 //   4. Prominence, sentiment and accuracy still need judgement. For now the same
-//      engine rates them in a separate call that only sees the finished answer;
-//      an independent judge with a client fact sheet is the planned next step.
+//      engine rates them in a separate call that only sees the finished answers
+//      — one call per job covering every sample that names the brand (it was
+//      one call per sample); an independent judge is the planned next step.
+//
+// Every model call is logged to geo_ai_usage (purpose answer / grade /
+// entities) so the spend per client is visible in Admin.
 //
 // The response keeps v1's result shape plus the full answer, per-sample detail
 // and web-search status.
@@ -34,10 +38,9 @@ import {
   envKey,
   json,
   KEY_ENV,
-  parseJson,
   providerFor,
 } from "../_shared/providers.ts";
-import type { ProviderId } from "../_shared/providers.ts";
+import type { UsageContext } from "../_shared/providers.ts";
 import { signedIn } from "../_shared/auth.ts";
 import { factSheetText } from "../_shared/facts.ts";
 import { extractEntities } from "../_shared/entities.ts";
@@ -51,17 +54,7 @@ import {
   siteDomain,
 } from "../_shared/measure.ts";
 import type { Named } from "../_shared/measure.ts";
-
-const PROMINENCE = ["Recommended", "Prominent", "Passing"];
-const SENTIMENT = ["Positive", "Neutral", "Negative"];
-const ACCURACY = ["Correct", "Minor error", "Major error"];
-
-type Grade = {
-  prominence: string;
-  sentiment: string | null;
-  accuracy: string | null;
-  accuracy_note?: string;
-};
+import { gradeAll, type Grade } from "../_shared/grade.ts";
 
 type SampleRun = {
   answer: string;
@@ -79,58 +72,6 @@ type SampleRun = {
   accuracy_note?: string;
 };
 
-function gradePrompt(question: string, answer: string, brand: Named, facts: string): string {
-  const aka = (brand.aliases || []).filter(Boolean);
-  return (
-    "Below is a question a user asked an AI assistant, and the assistant's answer.\n\n" +
-    "QUESTION:\n" + question + "\n\nANSWER:\n" + answer + "\n\n" +
-    (facts
-      ? "FACT SHEET for \"" + brand.name + "\", confirmed by the brand's own team. Treat it as " +
-        "ground truth when judging accuracy:\n" + facts + "\n\n"
-      : "") +
-    'Assess how the answer presents the brand "' + brand.name + '"' +
-    (aka.length ? " (also written as: " + aka.join(", ") + ")" : "") +
-    ". Return ONLY a JSON object with these keys:\n" +
-    '- "prominence": "Recommended" if the answer recommends it or ranks it among ' +
-    'its top picks; "Prominent" if it is discussed with some detail but not ' +
-    'recommended; "Passing" if it is only named in passing.\n' +
-    '- "sentiment": "Positive", "Neutral" or "Negative" — the tone towards the brand.\n' +
-    '- "accuracy": "Correct", "Minor error" or "Major error" — whether what the ' +
-    "answer states about the brand is factually right" +
-    (facts
-      ? ", checked against the fact sheet first and your own knowledge second. A " +
-        "statement that contradicts the fact sheet on what the brand does, offers or " +
-        "where it operates is a Major error; a wrong or out-of-date detail is a Minor error. "
-      : ", to the best of your knowledge. ") +
-    'Use "Correct" when nothing stated about the brand is wrong.' +
-    (facts ? '\n- "accuracy_note": one short sentence naming the error, or "" if Correct.' : "")
-  );
-}
-
-function pick(value: unknown, allowed: string[]): string | null {
-  const v = String(value ?? "").trim().toLowerCase();
-  return allowed.find((a) => a.toLowerCase() === v) ?? null;
-}
-
-async function grade(
-  provider: ProviderId,
-  key: string,
-  question: string,
-  answer: string,
-  brand: Named,
-  facts: string,
-): Promise<Grade> {
-  const out = await callModel(provider, key, gradePrompt(question, answer, brand, facts), 1500);
-  const g = out.error ? null : parseJson<Record<string, unknown>>(out.text);
-  return {
-    // A mentioned brand is at least "Passing" even when grading fails.
-    prominence: pick(g?.prominence, PROMINENCE) ?? "Passing",
-    sentiment: pick(g?.sentiment, SENTIMENT),
-    accuracy: pick(g?.accuracy, ACCURACY),
-    accuracy_note: g?.accuracy_note ? String(g.accuracy_note).slice(0, 300) : undefined,
-  };
-}
-
 type MeasureInput = {
   engine: string;
   question: string;
@@ -142,6 +83,8 @@ type MeasureInput = {
   country?: string | null;
   /** The client fact sheet as text, used to judge accuracy. */
   facts?: string;
+  /** The client, used only to label AI spend. */
+  brandId?: string | null;
 };
 
 type Outcome = {
@@ -173,34 +116,54 @@ async function measure(input: MeasureInput): Promise<Outcome> {
   const site = siteDomain(input.website);
   const samples = Math.max(1, Math.min(5, Number(input.samples) || 3));
 
+  const label = (purpose: string): UsageContext => ({ fn: "geo-measure", purpose, brandId: input.brandId });
+
   // Samples are independent, so they run side by side.
-  const settled = await Promise.all(
-    Array.from({ length: samples }, async (): Promise<SampleRun | string> => {
+  const answered = await Promise.all(
+    Array.from({ length: samples }, async () => {
       const out = await callModel(provider, key, question, 4000, {
         webSearch: true,
         country: input.country,
+        usage: label("answer"),
       });
       if (out.error) return out.error;
       if (!out.text.trim()) return out.model + " → empty answer";
-      const mentioned = names(out.text, brand);
-      const domains = citationDomains(out.citations);
-      const g: Grade = mentioned
-        ? await grade(provider, key, question, out.text, brand, input.facts || "")
-        : { prominence: "Absent", sentiment: null, accuracy: null };
-      return {
-        answer: out.text,
-        citations: out.citations,
-        searched: out.searched,
-        search_error: out.searchError,
-      country: countryCode(input.country),
-        model: out.model,
-        mentioned,
-        competitors: competitorsNamed(out.text, competitors),
-        client_cited: out.searched && site ? citesSite(domains, site) : null,
-        ...g,
-      };
+      return out;
     }),
   );
+
+  // Then one grading call covers every sample that names the brand.
+  const named = answered.map((o) => typeof o !== "string" && names(o.text, brand));
+  const toGrade = answered.filter((o, i): o is Exclude<typeof o, string> => typeof o !== "string" && named[i]);
+  const grades = await gradeAll(
+    provider,
+    key,
+    question,
+    toGrade.map((o) => o.text),
+    brand,
+    input.facts || "",
+    label("grade"),
+  );
+
+  let g = 0;
+  const settled: (SampleRun | string)[] = answered.map((out, i) => {
+    if (typeof out === "string") return out;
+    const mentioned = named[i];
+    const domains = citationDomains(out.citations);
+    const grade: Grade = mentioned ? grades[g++] : { prominence: "Absent", sentiment: null, accuracy: null };
+    return {
+      answer: out.text,
+      citations: out.citations,
+      searched: out.searched,
+      search_error: out.searchError,
+      country: countryCode(input.country),
+      model: out.model,
+      mentioned,
+      competitors: competitorsNamed(out.text, competitors),
+      client_cited: out.searched && site ? citesSite(domains, site) : null,
+      ...grade,
+    };
+  });
 
   const runs = settled.filter((s): s is SampleRun => typeof s !== "string");
   const errors = settled.filter((s): s is string => typeof s === "string");
@@ -349,6 +312,7 @@ async function runJob(jobId: string): Promise<Outcome> {
     samples: job.samples,
     country: brand.market_country,
     facts: factSheetText(brand.fact_sheet),
+    brandId: run.brand_id,
   });
 
   if (!out.ok || !out.result) {
@@ -371,9 +335,11 @@ async function runJob(jobId: string): Promise<Outcome> {
   // Every brand the answers name, for share of voice. Not fatal: geo-entities
   // can fill it in later.
   const client = { name: brand.name.trim(), aliases: brand.aliases || [], sector: brand.sector };
-  const ent = await extractEntities(client, [
-    { id: "r", question: prompt.text.trim(), answers: o.runs.map((r) => r.answer) },
-  ]);
+  const ent = await extractEntities(
+    client,
+    [{ id: "r", question: prompt.text.trim(), answers: o.runs.map((r) => r.answer) }],
+    { fn: "geo-measure", purpose: "entities", brandId: run.brand_id },
+  );
   const row = {
     run_id: job.run_id,
     prompt_id: job.prompt_id,
@@ -432,6 +398,8 @@ Deno.serve(async (req: Request) => {
     samples?: number;
     country?: string | null;
     fact_sheet?: unknown;
+    /** The client, used only to label AI spend. */
+    brand_id?: string | null;
   };
 
   if (body.job_id) return json(await runJob(String(body.job_id)));
@@ -451,6 +419,7 @@ Deno.serve(async (req: Request) => {
       samples: Number(body.samples) || 3,
       country: body.country,
       facts: factSheetText(body.fact_sheet),
+      brandId: body.brand_id,
     }),
   );
 });

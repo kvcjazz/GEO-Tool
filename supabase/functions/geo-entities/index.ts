@@ -95,7 +95,7 @@ Deno.serve(async (req: Request) => {
     const batches: EntityJob[][] = [];
     for (let i = 0; i < jobs.length; i += BATCH) batches.push(jobs.slice(i, i + BATCH));
 
-    const results = await Promise.all(batches.map((b) => extractEntities(client, b)));
+    const results = await Promise.all(batches.map((b) => extractEntities(client, b, { fn: "geo-entities", purpose: "entities-backfill", brandId: bid })));
     for (let i = 0; i < batches.length; i++) {
       const res = results[i];
       if (res.error) errors.push(res.error);

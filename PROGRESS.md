@@ -224,3 +224,56 @@ are kept visibly apart: everything from search data is teal and labelled
   function boots. Not yet run end-to-end with a signed-in user and real AI call.
 - Branch note: built on `claude/cool-euler-mymkvt` (main + PR #6) because PR #6
   — whose `summary` mode is live — was merged into that branch, not `main`.
+
+## 2026-11-12 — AI spend: logging, duplicate-check guards, fewer grading calls
+
+Why: an audit of `geo_measure_jobs` found ~36% of completed measurement jobs
+since v2 went live were duplicates — 358 of 1,308 re-measured a question ×
+engine already done in the same check ("Re-measure now" re-queues every cell),
+and a further ~115 belonged to a Hippo November check replaced 4 days later by
+a manual one. Part of October's duplication was v2 build/testing. Nothing
+recorded what any AI call cost, so none of this was visible, while the
+Anthropic and OpenAI accounts hit their spend/quota limits.
+
+- **Spend log:** `geo_ai_usage` (admin-only RLS) gets one row per provider
+  request — function, purpose, client, model, input/output tokens (thinking
+  included), billed web searches, Perplexity's reported cost, failures.
+  Written best-effort by `callModel` in `_shared/providers.ts` when a call
+  carries a `usage` label; every AI call site now passes one. The app adds the
+  open client's `brand_id` to AI function bodies (`src/lib/callFn.ts`).
+- **Admin → AI spend** (`src/components/AiSpendPanel.tsx`): this month / last
+  month / 3 months, by client and by purpose, failed calls, and a $ estimate
+  from per-model prices an admin enters (`geo_ai_rates`, longest model-prefix
+  match). Roll-up via `geo_ai_usage_summary(from, to)`.
+- **Duplicate checks:** "Run monthly check" warns when the client was checked
+  in the last 25 days and points to "Measure now" (missing only); both it and
+  the renamed "Re-measure everything…" show the cost (pairs × samples searched
+  answers + analysis calls) and refuse while a check is running. The new-question
+  prompts now count the other missing measurements they also queue. The cron
+  calls `geo_monthly_snapshots(3, 7)`, which skips clients with a v2 check
+  started in the last 7 days.
+- **Grading:** `geo-measure` rates all samples that name the client in ONE call
+  per job (was one per sample) — same engine as judge, so scores stay
+  comparable. Code moved to `_shared/grade.ts` with tests.
+- **Small leaks:** the Overview strategy summary auto-rewrites at most once per
+  session per client + strategy version (read-only viewers, whose save is
+  refused, used to trigger it on every visit). `geo-run` (v1) is listed for the
+  410 retired stub.
+- **Not changed here:** the `geo-entities` attempt counter — the live DB has
+  `entities_attempts` + `geo_entities_failed()` (migration
+  `entities_attempt_limit`, applied 2026-11-12 by another session) but the
+  deployed function doesn't increment it yet; that session owns the fix.
+- **Next spend levers (not built):** adaptive sampling (1 sample, more only
+  when borderline/changed); an independent, cheaper judge doing grading +
+  brand extraction in one call (methodology change — needs a comparison run
+  and re-baseline); listening reusing the monthly answers; queueing only
+  engines with keys (Grok jobs are skipped at no AI cost).
+- Verified: `next build`; `tsc`; `deno check` all functions; 33 edge tests
+  (10 new: usage parsing per provider, failure logging, batched grading); the
+  migration run in PGlite against a stand-in schema (cron skip rules, roll-up,
+  admin-only, client delete keeps spend, re-runnable); spend panel rendered
+  with sample data at desktop + phone width.
+- **To go live:** apply migration `20261112150000_ai_usage_and_check_guards`;
+  deploy geo-measure, geo-advise, geo-classify-sources, geo-coverage-meta,
+  geo-entities, geo-listen, geo-radar, geo-targets; deploy `retired` over
+  `geo-run`; deploy the app.

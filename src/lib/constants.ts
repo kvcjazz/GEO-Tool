@@ -158,7 +158,7 @@ export const AREAS: Area[] = [
     client: false,
     question: "What do the AI engines actually say when buyers ask our questions?",
     todo: "Read the answers behind the score, see which sites the engines trust, and correct any rating that looks wrong.",
-    action: { kind: "remeasure", label: "Re-measure now" },
+    action: { kind: "remeasure", label: "Re-measure everything…" },
     tabs: [
       {
         id: "answers",

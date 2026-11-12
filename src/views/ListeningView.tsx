@@ -22,7 +22,18 @@ function sTag(s?: string | null) {
 }
 
 export default function ListeningView() {
-  const { brand, data, mode, sb, toast, reload, measureNewQuestions } = useAppState();
+  const {
+    brand,
+    data,
+    mode,
+    sb,
+    toast,
+    reload,
+    measureNewQuestions,
+    missingMeasurements,
+    liveEngineCount,
+    samples,
+  } = useAppState();
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
@@ -95,8 +106,11 @@ export default function ListeningView() {
       window.confirm(
         "Measure the new question" +
           (rows.length === 1 ? "" : "s") +
-          " now on every live AI engine, so they're in this month's results? " +
-          "Otherwise they're picked up by the next monthly check. Uses your AI credit.",
+          " now on every live AI engine, so they're in this month's results? That's " +
+          (rows.length * liveEngineCount + missingMeasurements) +
+          " measurements" +
+          (missingMeasurements ? ` (including ${missingMeasurements} already missing from this check)` : "") +
+          `, ${samples} samples each. Otherwise they're picked up by the next monthly check. Uses your AI credit.`,
       )
     )
       await measureNewQuestions();
