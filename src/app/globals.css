@@ -1399,3 +1399,37 @@ button.ctx-client:hover {
 .explainer li + li {
   margin-top: 4px;
 }
+
+/* ---------- action plan ---------- */
+/* A title you can click to rename, without looking like a form field. */
+.inline-edit {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+}
+.inline-edit:hover,
+.inline-edit:focus-visible {
+  border-bottom-color: var(--muted);
+}
+input.overdue {
+  border-color: var(--red);
+  color: var(--red);
+}
+button.expander {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  padding: 2px 6px;
+}
+.dismiss-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #fafbfd;
+}

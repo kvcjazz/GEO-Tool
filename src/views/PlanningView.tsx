@@ -17,6 +17,9 @@ function feasTag(f?: string | null) {
   return <span className={`tag ${c}`}>{f || "—"}</span>;
 }
 
+const UNREALISTIC = "Not realistic for these outlets";
+const DISMISS_REASONS = [UNREALISTIC, "Off-strategy for the client", "Already done or planned", "Wrong timing"];
+
 export default function PlanningView() {
   const {
     brand,
@@ -27,10 +30,14 @@ export default function PlanningView() {
     reload,
     memory,
     buildFeasibilityMemory,
+    setView,
   } = useAppState();
   const [radar, setRadar] = useState<RadarItem[]>(data.radar);
   const [busyNews, setBusyNews] = useState(false);
   const [busyRadar, setBusyRadar] = useState(false);
+  // The idea whose dismiss reasons are showing, and a typed "other" reason.
+  const [dismissing, setDismissing] = useState<string | null>(null);
+  const [otherReason, setOtherReason] = useState("");
 
   useEffect(() => setRadar(data.radar), [data.radar]);
   useEffect(() => {
@@ -101,9 +108,9 @@ export default function PlanningView() {
     if (mode !== "team") return;
     if (
       !window.confirm(
-        "Generate a Radar briefing for " +
+        "Get new PR and content ideas for " +
           brand!.name +
-          "? This pulls fresh news and calls the AI (uses your Anthropic credit).",
+          "? This pulls fresh news and asks the AI for ideas based on the latest check. Uses AI credit.",
       )
     )
       return;
@@ -230,8 +237,6 @@ export default function PlanningView() {
     toast(error ? "Failed" : msg);
   }
 
-  const rateRadar = (id: string, val: string) =>
-    patchStatus(id, { team_rating: val }, "Rated: " + val);
   const saveRadar = (id: string) =>
     patchStatus(id, { status: "saved" }, "Saved to your library");
   const unsaveRadar = (id: string) =>
@@ -239,11 +244,20 @@ export default function PlanningView() {
   const restoreRadar = (id: string) =>
     patchStatus(id, { status: "new", dismiss_reason: null }, "Restored");
 
-  async function dismissRadar(id: string) {
-    const reason = window.prompt(
-      "Why dismiss this? (optional — helps the system learn what won't work)",
+  // A dismissed idea counts against its outlets in "What's worked with
+  // outlets"; the reason says why, so the Radar can avoid it next time.
+  async function dismissRadar(id: string, reason: string | null) {
+    setDismissing(null);
+    setOtherReason("");
+    await patchStatus(
+      id,
+      {
+        status: "dismissed",
+        dismiss_reason: reason,
+        ...(reason === UNREALISTIC ? { team_rating: "Unrealistic" } : {}),
+      },
+      "Dismissed",
     );
-    await patchStatus(id, { status: "dismissed", dismiss_reason: reason }, "Dismissed");
   }
 
   // Accepting an idea puts it in the one action plan (whatever its stream), so
@@ -263,7 +277,10 @@ export default function PlanningView() {
     };
     const { error } = await sb.from("geo_opportunities").insert(rec);
     if (error) return toast("Failed: " + error.message);
-    await sb.from("geo_radar_items").update({ status: "in_plan" }).eq("id", id);
+    await sb
+      .from("geo_radar_items")
+      .update({ status: "in_plan", team_rating: r.team_rating || "Realistic" })
+      .eq("id", id);
     toast("Added to the action plan");
     await reload();
   }
@@ -304,12 +321,7 @@ export default function PlanningView() {
               · <span className="badge">⭐ Saved</span>
             </>
           )}
-          {it.team_rating && (
-            <>
-              {" "}
-              · You rated: <b>{it.team_rating}</b>
-            </>
-          )}
+
         </div>
         <div style={{ margin: "8px 0", fontSize: 13, lineHeight: 1.5 }}>{it.idea || ""}</div>
         {it.target_outlets && (
@@ -327,20 +339,8 @@ export default function PlanningView() {
             {it.rationale}
           </div>
         )}
-        {mode === "team" && !dismissed && (
-          <div className="flex" style={{ marginTop: 10 }}>
-            <button
-              className="btn sm ghost"
-              onClick={() => rateRadar(it.id, "Realistic")}
-            >
-              👍 Realistic
-            </button>
-            <button
-              className="btn sm ghost"
-              onClick={() => rateRadar(it.id, "Unrealistic")}
-            >
-              👎 Unrealistic
-            </button>
+        {mode === "team" && !dismissed && dismissing !== it.id && (
+          <div className="flex" style={{ marginTop: 10, gap: 8 }}>
             {!approved && (
               <button className="btn sm" onClick={() => addToPlan(it.id)}>
                 ✓ Add to plan
@@ -348,16 +348,50 @@ export default function PlanningView() {
             )}
             {saved ? (
               <button className="btn sm ghost" onClick={() => unsaveRadar(it.id)}>
-                Move to active
+                Back to inbox
               </button>
             ) : (
-              <button className="btn sm ghost" onClick={() => saveRadar(it.id)}>
-                ⭐ Save for later
+              !approved && (
+                <button className="btn sm ghost" onClick={() => saveRadar(it.id)}>
+                  Save for later
+                </button>
+              )
+            )}
+            {!approved && (
+              <button className="btn sm ghost" onClick={() => setDismissing(it.id)}>
+                Dismiss…
               </button>
             )}
-            <button className="btn sm danger" onClick={() => dismissRadar(it.id)}>
-              Dismiss
-            </button>
+          </div>
+        )}
+        {mode === "team" && dismissing === it.id && (
+          <div className="dismiss-box" role="group" aria-label="Why dismiss this idea?">
+            <span className="muted" style={{ fontSize: 12 }}>
+              Why? It helps the next ideas avoid the same miss.
+            </span>
+            <div className="flex" style={{ gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {DISMISS_REASONS.map((r) => (
+                <button key={r} type="button" className="btn sm ghost" onClick={() => dismissRadar(it.id, r)}>
+                  {r}
+                </button>
+              ))}
+              <input
+                value={otherReason}
+                placeholder="Other reason…"
+                aria-label="Other reason"
+                style={{ width: 180 }}
+                onChange={(e) => setOtherReason(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void dismissRadar(it.id, otherReason.trim() || null);
+                }}
+              />
+              <button type="button" className="btn sm danger" onClick={() => dismissRadar(it.id, otherReason.trim() || null)}>
+                Dismiss
+              </button>
+              <button type="button" className="linkbtn" style={{ padding: 0 }} onClick={() => setDismissing(null)}>
+                Cancel
+              </button>
+            </div>
           </div>
         )}
         {dismissed && (
@@ -372,7 +406,8 @@ export default function PlanningView() {
     );
   }
 
-  const active = radar.filter((r) => r.status === "new" || r.status === "in_plan");
+  const active = radar.filter((r) => r.status === "new");
+  const accepted = radar.filter((r) => r.status === "in_plan");
   const saved = radar.filter((r) => r.status === "saved");
   const dismissed = radar.filter((r) => r.status === "dismissed");
   const prItems = active
@@ -443,14 +478,14 @@ export default function PlanningView() {
             </div>
             <div className="legend-note">
               These headlines feed the Radar&#39;s newsjacking suggestions when you
-              generate a briefing.
+              ask for new ideas.
             </div>
           </>
         ) : (
           <div className="sec-sub" style={{ marginTop: 8 }}>
             No news pulled yet.{" "}
             {mode === "team"
-              ? "Click Refresh news, or just generate a briefing — it pulls fresh news automatically."
+              ? "Click Refresh news, or just get new ideas — that pulls fresh news automatically."
               : ""}
           </div>
         )}
@@ -471,7 +506,7 @@ export default function PlanningView() {
             ))}
           </div>
           <div className="legend-note">
-            Feeds differentiation and defensive angles into the briefing.
+            Feeds differentiation and defensive angles into new ideas.
           </div>
         </div>
       )}
@@ -480,7 +515,7 @@ export default function PlanningView() {
       {mem.length > 0 && (
         <div className="card" style={{ marginBottom: 14 }}>
           <h3>
-            🧠 Outlet feasibility memory{" "}
+            🧠 What&#39;s worked with outlets{" "}
             <span className="muted" style={{ textTransform: "none", fontWeight: 500 }}>
               — what the system has learned
             </span>
@@ -536,12 +571,12 @@ export default function PlanningView() {
       {mode === "team" && (
         <div style={{ marginBottom: 14 }}>
           <button className="btn" onClick={runRadar} disabled={busyRadar}>
-            {busyRadar ? "📡 Thinking…" : "📡 Generate Radar briefing"}
+            {busyRadar ? "Thinking…" : "Get new ideas"}
           </button>{" "}
           <span className="muted" style={{ fontSize: 12 }}>
             {haveProfile
               ? "Pulls fresh news, avoids repeating earlier ideas. Uses your Anthropic credit."
-              : "Tip: complete the Client PR Profile in Settings for sharper, more feasible results."}
+              : "Tip: fill in the PR profile in Client setup for sharper, more realistic ideas."}
           </span>
         </div>
       )}
@@ -550,40 +585,51 @@ export default function PlanningView() {
         <div className="two" style={{ alignItems: "start" }}>
           <div>
             <h3 style={{ color: "var(--blue)", fontSize: 14, marginBottom: 8 }}>
-              📣 PR activity ({prItems.length})
+              📣 PR ideas ({prItems.length})
             </h3>
             {prItems.length ? (
               prItems.map(radarCard)
             ) : (
-              <div className="card muted">No PR-activity ideas yet.</div>
+              <div className="card muted">No PR ideas in the inbox.</div>
             )}
           </div>
           <div>
             <h3 style={{ color: "var(--green)", fontSize: 14, marginBottom: 8 }}>
-              🔍 GEO-supporting insight ({geoItems.length})
+              🔍 Content &amp; technical ({geoItems.length})
             </h3>
             {geoItems.length ? (
               geoItems.map(radarCard)
             ) : (
-              <div className="card muted">No GEO-insight items yet.</div>
+              <div className="card muted">No content or technical ideas in the inbox.</div>
             )}
           </div>
         </div>
       ) : (
         <div className="card">
-          <h3>No active ideas yet</h3>
+          <h3>{accepted.length || saved.length ? "Inbox clear" : "No ideas yet"}</h3>
           <div className="sec-sub">
             {mode === "team"
-              ? "Click Generate Radar briefing for your first set of recommendations."
+              ? accepted.length || saved.length
+                ? "Every idea has been dealt with. Click Get new ideas for more."
+                : "Click Get new ideas for your first set of recommendations."
               : "No PR recommendations have been generated yet."}
           </div>
+        </div>
+      )}
+
+      {accepted.length > 0 && (
+        <div className="legend-note" style={{ marginTop: 12 }}>
+          {accepted.length} idea{accepted.length === 1 ? " is" : "s are"} already in the action plan.{" "}
+          <button type="button" className="linkbtn" style={{ padding: 0 }} onClick={() => setView("plan", "actions")}>
+            Open the action plan →
+          </button>
         </div>
       )}
 
       {saved.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <h3 style={{ color: "var(--navy)", fontSize: 14, marginBottom: 8 }}>
-            ⭐ Saved ideas ({saved.length}) — your library for later
+            ⭐ Saved for later ({saved.length})
           </h3>
           {saved.map(radarCard)}
         </div>
