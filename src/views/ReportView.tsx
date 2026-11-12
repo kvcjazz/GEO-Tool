@@ -7,8 +7,8 @@ import { brandMentionsTotal, categoryBrands, computeAll } from "@/lib/scoring";
 import { r1, sum } from "@/lib/format";
 import { namesBrand, reachSplit } from "@/lib/questions";
 import { gapSources, isTarget, KIND_LABELS } from "@/lib/sources";
-import { checksOf, placementImpact, type V2Answer } from "@/lib/prImpact";
-import type { Run } from "@/lib/types";
+import { checksOf, placementImpact } from "@/lib/prImpact";
+import { compareChecks, previousCheck } from "@/lib/changes";
 
 // The monthly client report: one printable page that answers "how visible are
 // we in AI answers, what changed, what is PR doing about it, and is it
@@ -62,48 +62,15 @@ export default function ReportView() {
   const { perEngine, blended } = computeAll(brand, responses);
   const reach = reachSplit(brand, data.prompts, responses);
 
-  // Previous check measured the same way, for "what changed".
-  const sameMethod = (r: Run) => (r.method ?? null) === (run.method ?? null);
-  const prevRun = [...data.runs]
-    .filter((r) => sameMethod(r) && r.id !== run.id && data.history[r.id]?.length)
-    .sort((a, b) => a.run_date.localeCompare(b.run_date) || a.created_at.localeCompare(b.created_at))
-    .filter((r) => r.run_date <= run.run_date)
-    .pop();
+  // Previous check measured the same way, for "what changed" (shared with the
+  // Overview so both say the same thing).
+  const prevRun = previousCheck(run, data.runs, data.history);
   const prevScore = prevRun ? computeAll(brand, data.history[prevRun.id]).blended : null;
   const scoreDelta = prevScore ? r1(blended.geo - prevScore.geo) : null;
-
-  // Like-for-like comparison with the previous check (same question × engine).
-  let prevReach: { newBuyers: number; byName: number } | null = null;
-  let gained: string[] = [];
-  let lost: string[] = [];
-  if (answers && prevRun) {
-    const key = (a: { prompt_id: string; engine: string }) => a.prompt_id + "|" + a.engine;
-    const cur = new Map(answers.filter((a) => a.run_id === run.id).map((a) => [key(a), a]));
-    const prev = new Map(answers.filter((a) => a.run_id === prevRun.id).map((a) => [key(a), a]));
-    const both = [...cur.keys()].filter((k) => prev.has(k));
-    const branded = new Map(data.prompts.map((p) => [p.id, namesBrand(p.text, brand)]));
-    const rateOf = (m: Map<string, V2Answer>, wantBranded: boolean) => {
-      const rows = both.map((k) => m.get(k)!).filter((a) => (branded.get(a.prompt_id) ?? false) === wantBranded);
-      return { named: rows.filter((a) => a.mentioned).length, n: rows.length };
-    };
-    const nbPrev = rateOf(prev, false);
-    const bnPrev = rateOf(prev, true);
-    if (both.length) prevReach = { newBuyers: pct(nbPrev.named, nbPrev.n), byName: pct(bnPrev.named, bnPrev.n) };
-    // Questions now named by more / fewer engines than last time.
-    const byQ = (m: Map<string, V2Answer>) => {
-      const out = new Map<string, number>();
-      for (const k of both) {
-        const a = m.get(k)!;
-        out.set(a.prompt_id, (out.get(a.prompt_id) || 0) + (a.mentioned ? 1 : 0));
-      }
-      return out;
-    };
-    const qc = byQ(cur);
-    const qp = byQ(prev);
-    const text = new Map(data.prompts.map((p) => [p.id, p.text]));
-    gained = [...qc.keys()].filter((q) => (qc.get(q) || 0) > (qp.get(q) || 0)).map((q) => text.get(q) || "");
-    lost = [...qc.keys()].filter((q) => (qc.get(q) || 0) < (qp.get(q) || 0)).map((q) => text.get(q) || "");
-  }
+  const cmp = compareChecks(brand, run, prevRun, answers, data.prompts);
+  const prevReach = cmp.prevReach;
+  const gained = cmp.gained.map((q) => q.text);
+  const lost = cmp.lost.map((q) => q.text);
 
   // Competitors.
   const bm = brandMentionsTotal(responses);

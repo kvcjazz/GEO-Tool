@@ -89,7 +89,7 @@ const EMPTY: BrandData = {
 };
 
 export type Mode = "team" | "client";
-export type AnswersFilter = "all" | "unbranded" | "branded";
+export type AnswersFilter = "all" | "unbranded" | "branded" | "missed" | "inaccurate";
 
 type Ctx = {
   ready: boolean;

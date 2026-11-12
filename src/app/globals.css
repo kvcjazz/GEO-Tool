@@ -492,6 +492,57 @@ textarea:focus {
   font-size: 13px;
   color: var(--muted);
 }
+.action-item span.d,
+.action-item .linkbtn {
+  display: block;
+}
+/* An action you can click to open in the plan. */
+button.action-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+button.action-link:hover,
+button.action-link:focus-visible {
+  border-color: var(--blue);
+  background: #f5f8ff;
+}
+/* Briefly highlights the item a link has just jumped to. */
+.flash {
+  animation: flash 1.6s ease-out;
+}
+@keyframes flash {
+  0%,
+  30% {
+    background: #fff4d6;
+    box-shadow: 0 0 0 2px #e8b84a;
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash {
+    animation: none;
+    box-shadow: 0 0 0 2px #e8b84a;
+  }
+}
+.change-list {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.change-list ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.change-list li {
+  margin: 2px 0;
+}
 
 /* ---------- setup checklist ---------- */
 .checklist {
