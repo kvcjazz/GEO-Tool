@@ -87,7 +87,7 @@ export default function CompetitorsView() {
                     </td>
                     <td style={{ textAlign: "right" }}>{r1(r.share)}%</td>
                     <td style={{ textAlign: "right" }}>
-                      <b className={r.lost.length ? "prio-hi" : ""}>{r.lost.length}</b>
+                      <b style={r.lost.length ? { color: "var(--red)" } : undefined}>{r.lost.length}</b>
                     </td>
                     <td style={{ textAlign: "right" }}>{r.both}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>

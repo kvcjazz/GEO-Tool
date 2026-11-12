@@ -1714,6 +1714,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           <div className="wrow" style={{ marginTop: 10, maxWidth: 420 }}>
             <label htmlFor="samples-per-question">Times each question is asked — {brand.name}</label>
             <select
+              style={{ width: "auto", minWidth: 280 }}
               id="samples-per-question"
               value={samples}
               onChange={(e) => setSamples(+e.target.value)}

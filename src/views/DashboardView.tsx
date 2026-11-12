@@ -330,7 +330,7 @@ export default function DashboardView() {
                       {attention.errors.some((r) => r.accuracy === "Major error") ? "Major" : "Minor"} accuracy
                     </span>
                     <b>
-                      {attention.errors.length} answer{attention.errors.length === 1 ? "" : "s"} get{" "}
+                      {attention.errors.length} answer{attention.errors.length === 1 ? " gets" : "s get"}{" "}
                       {brand.name}&#39;s facts wrong
                     </b>
                     <span className="d">

@@ -277,3 +277,57 @@ Anthropic and OpenAI accounts hit their spend/quota limits.
   deploy geo-measure, geo-advise, geo-classify-sources, geo-coverage-meta,
   geo-entities, geo-listen, geo-radar, geo-targets; deploy `retired` over
   `geo-run`; deploy the app.
+
+## 2026-11-12 — UX round: monthly cycle, plan, answers, competitors, onboarding
+
+Built from a UX review of main (team workflow + GEO/PR practice). All in
+`claude/eloquent-hopper-a880d6`; needs migration
+`20261112170000_ux_plan_answers_samples` (applied after
+`20261112150000_ai_usage_and_check_guards`). Screens degrade gracefully before
+it is applied (samples default to 3; due dates/override/replaces fail to save
+with a message or save without the extra field).
+
+- **Automatic check visible:** context bar shows "Next auto check 1 Dec" (or
+  that it will skip this client). Samples per question are a saved client
+  setting (`geo_brands.measure_samples`, 1–5) used by manual checks and the
+  cron (`geo_monthly_snapshots` now uses it); Admin control is a select with
+  cost guidance.
+- **Overview:** score change is vs the last check (as on All clients and the
+  Report), since-first-check second; no more double minus. New "What changed"
+  (questions gained/lost an engine, reach before → after) and "Needs attention"
+  (wrong facts, questions that name other brands but never the client,
+  negative answers) with links to filtered answers. Shared logic in
+  `src/lib/changes.ts`, also used by the Report. Top actions open the action in
+  the plan. Client view: plain-language "How the score works" instead of the
+  weights table.
+- **Questions:** rewording a measured question creates a new question
+  (`geo_prompts.replaces`) and retires the old one; typo-level edits save in
+  place. Deleting questions, placements and mentions asks first.
+- **Action plan:** High/Medium/Low priority; inline title, owner, due date
+  (`geo_opportunities.due_date`, overdue flagged), impact/effort; Open / Done /
+  Parked filters; "+ Add an action"; delete with confirm. Client view:
+  In progress / Coming up / Done only.
+- **Ideas inbox:** three actions per card; 👍/👎 removed (accept/save already
+  count as realistic, dismiss as not); dismiss reasons are inline chips;
+  accepted ideas leave the inbox; plain wording (Get new ideas, What's worked
+  with outlets, Content & technical).
+- **Answers:** filters "Others named, not <client>" and "Gets facts wrong";
+  "Not fully measured" list with Measure what's missing; overrides record
+  who/when/original (`geo_responses.override`), show "✎ edited" and can be
+  restored. New **Competitors** tab (`src/lib/competitors.ts`): questions each
+  named brand wins while the client is absent, head-to-head, one-click Track.
+- **Onboarding:** Admin → Add a client is a two-step wizard drafting editable,
+  mostly unbranded starter questions (`src/lib/starterQuestions.ts`); no empty
+  old-method run. Setup checklist flags question sets under two thirds
+  unbranded.
+- **Other:** Admin area shown to account admins only; client view hides tiers
+  below Tier 1; "Enter answers by hand" adds rows for connected engines only
+  (blank rows for keyless engines used to score as "not named"); jargon
+  removed (capture grid, Prompt, Client PR Profile, Radar briefing).
+- Verified: build, tsc, lint (no new errors — the 5 remaining are on main);
+  lib logic run under Deno (changes, competitors, starter questions);
+  migrations run in PGlite (per-client samples in cron, check constraint,
+  `replaces` on delete, re-runnable); screens rendered with mocked data and
+  checked: Overview team/client, Answers filters, Competitors, Action plan
+  team/client, Ideas dismiss, new-client wizard.
+- Not verified signed in against live data (no sign-in from the container).

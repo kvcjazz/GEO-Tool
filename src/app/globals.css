@@ -1433,3 +1433,28 @@ button.expander {
   border-radius: 8px;
   background: #fafbfd;
 }
+/* New-client wizard: one starter question per row. */
+.starter-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.starter-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.starter-list input[type="checkbox"] {
+  width: auto;
+  flex: none;
+}
+.starter-list input:not([type]) {
+  flex: 1;
+  min-width: 0;
+}
+.starter-list .tag {
+  flex: none;
+}
