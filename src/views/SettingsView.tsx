@@ -16,6 +16,7 @@ import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
 import AiSpendPanel from "@/components/AiSpendPanel";
+import NewClientWizard from "@/components/NewClientWizard";
 import CategoryBrandsPanel from "@/components/CategoryBrandsPanel";
 import { setupSteps } from "@/lib/setup";
 import { SeoChip } from "@/components/ui";
@@ -46,7 +47,6 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     toast,
     reload,
     loadBrands,
-    selectBrand,
     setView,
     patchBrand,
     samples,
@@ -58,6 +58,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     liveEngineCount,
   } = useAppState();
 
+  const [wizard, setWizard] = useState(false);
   const [strategy, setStrategy] = useState({
     objective: "",
     audience: "",
@@ -662,8 +663,12 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       data.currentRun ? data.responses.map((r) => r.prompt_id + "|" + r.engine) : [],
     );
     const rows: ResponseInsert[] = [];
+    // Only connected engines: a blank row for an engine nobody can measure
+    // would be scored as "not named" and drag the score down.
+    const live = ENGINES.filter((e) => engines[e]);
+    if (!live.length) return toast("No AI engines are connected");
     active.forEach((p) =>
-      ENGINES.forEach((e) => {
+      live.forEach((e) => {
         if (!have.has(p.id + "|" + e))
           rows.push({
             run_id: runId!,
@@ -682,51 +687,6 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     toast(rows.length + " new rows added (existing data kept)");
     await reload();
     setView("answers", "answers");
-  }
-
-  async function createClient() {
-    const name = window.prompt("New client name:");
-    if (!name) return;
-    const nm = name.trim();
-    const { data: newBrand, error } = await sb
-      .from("geo_brands")
-      .insert({ name: nm, is_client: true })
-      .select()
-      .single();
-    if (error || !newBrand) return toast("Failed");
-    const bid = newBrand.id;
-    await sb.from("geo_runs").insert({
-      brand_id: bid,
-      label: monthLabel() + " (Current)",
-      run_date: todayISO(),
-      is_current: true,
-    });
-    const starter: [string, string, string][] = [
-      ["P01", "Category", "best " + nm + " alternatives"],
-      ["P02", "Category", "top providers in " + nm + "'s category"],
-      ["P03", "Comparison", nm + " vs competitors"],
-      ["P04", "Brand/Entity", "what is " + nm],
-      ["P05", "Brand/Entity", "is " + nm + " any good"],
-      ["P06", "Brand/Entity", nm + " reviews"],
-      ["P07", "Problem-led", "how to choose a provider in " + nm + "'s category"],
-      ["P08", "Buying-intent", nm + " pricing"],
-    ];
-    await sb.from("geo_prompts").insert(
-      starter.map((s, i) => ({
-        brand_id: bid,
-        code: s[0],
-        ptype: s[1],
-        text: s[2],
-        sort: i,
-        active: true,
-      })),
-    );
-    toast(
-      "Client scaffolded: starter run + 8 prompts. Add strategy, refine prompts, then Generate capture grid.",
-    );
-    await loadBrands();
-    await selectBrand(bid);
-    setView("setup");
   }
 
   async function archiveClient() {
@@ -1273,7 +1233,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                 <tr>
                   <th>ID</th>
                   <th>Type</th>
-                  <th>Prompt</th>
+                  <th>Question</th>
                   <th>Active</th>
                   <th></th>
                 </tr>
@@ -1343,7 +1303,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
               onChange={(e) => setNewPrompt(e.target.value)}
             />
             <button className="btn sm" onClick={addPrompt}>
-              Add prompt
+              Add question
             </button>
           </div>
           <div
@@ -1398,9 +1358,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         style={{ marginBottom: 16, borderLeft: "5px solid var(--blue)" }}
       >
         <h3>
-          Client PR Profile{" "}
+          PR profile{" "}
           <span className="muted" style={{ textTransform: "none", fontWeight: 500 }}>
-            — powers the PR Planning radar
+            — shapes the ideas in Plan → Ideas inbox
           </span>
         </h3>
         <div className="legend-note">
@@ -1675,15 +1635,16 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           <div className="card stack" style={{ marginBottom: 16 }}>
             <h3>Clients</h3>
             <div className="legend-note">
-              Adds a client with 8 starter questions. Then work through Client setup and run
-              its first monthly check.
+              A short form: who the client is, who buys, and starter questions drafted from it.
+              Then finish Client setup and run its first monthly check.
             </div>
             <div className="flex">
-              <button className="btn sm" onClick={createClient}>
+              <button className="btn sm" onClick={() => setWizard(true)} disabled={wizard}>
                 + Add a client
               </button>
             </div>
           </div>
+          {wizard && <NewClientWizard onDone={() => setWizard(false)} />}
       {/* Users & access (account-wide) */}
       <UsersAdmin />
       {/* AI spend (account-wide, admins) */}
@@ -1781,14 +1742,14 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         </div>
         {/* Data tools */}
         <div className="card stack" style={{ gridColumn: "1/-1" }}>
-          <h3>Data tools</h3>
+          <h3>Enter answers by hand</h3>
           <div className="legend-note">
-            For entering answers by hand: adds blank rows only for question × engine combinations that don&#39;t
+            Only for answers you collect yourself (for example from an engine that isn&#39;t connected). Adds blank rows to fill in on AI answers → Review / override, only for question × connected engine pairs that don&#39;t
             have one yet — it never overwrites or deletes existing responses.
           </div>
           <div className="flex">
             <button className="btn sm" onClick={generateCapture}>
-              Generate / refresh capture grid
+              Add blank rows to fill in
             </button>
           </div>
         </div>

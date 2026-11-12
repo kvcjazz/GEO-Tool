@@ -385,7 +385,8 @@ export default function PRView() {
                         <div style={{ fontSize: 12, maxWidth: 320 }}>{i.pr.headline}</div>
                       )}
                       {ro ? (
-                        i.pr.tier && <div className="muted" style={{ fontSize: 11 }}>{i.pr.tier}</div>
+                        // Clients see the Tier 1 badge, not a lower grade on their own coverage.
+                        i.pr.tier === "Tier 1" && <div className="muted" style={{ fontSize: 11 }}>Tier 1</div>
                       ) : (
                         <select
                           className="tier-select"

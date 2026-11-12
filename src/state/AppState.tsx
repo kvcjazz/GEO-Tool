@@ -94,6 +94,7 @@ export type AnswersFilter = "all" | "unbranded" | "branded" | "missed" | "inaccu
 type Ctx = {
   ready: boolean;
   userEmail: string;
+  isAdmin: boolean;
   sb: ReturnType<typeof getSupabaseBrowserClient>;
 
   mode: Mode;
@@ -173,6 +174,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const [ready, setReady] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  // Account admins see the Admin area (clients, users, AI spend, weights).
+  const [isAdmin, setIsAdmin] = useState(false);
   const [mode, setMode] = useState<Mode>(
     searchParams.get("view") === "client" ? "client" : "team",
   );
@@ -762,7 +765,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         data: { session },
       } = await sb.auth.getSession();
       if (cancelled) return;
-      if (session) setUserEmail(session.user.email || "");
+      if (session) {
+        setUserEmail(session.user.email || "");
+        setIsAdmin((session.user.app_metadata as { role?: string } | undefined)?.role === "admin");
+      }
       await loadEngines();
       await loadBrands();
       // Team view opens on All clients unless a link named the client.
@@ -793,6 +799,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const value: Ctx = {
     ready,
     userEmail,
+    isAdmin,
     sb,
     mode,
     view,

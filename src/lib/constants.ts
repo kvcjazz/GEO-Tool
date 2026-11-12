@@ -196,7 +196,7 @@ export const AREAS: Area[] = [
       {
         id: "ideas",
         label: "Ideas inbox",
-        hint: "New suggestions from the Radar briefing. Add the good ones to the plan — rating them teaches the Radar.",
+        hint: "New PR and content ideas drawn from the latest check and the news. Add the good ones to the plan; what you accept and dismiss shapes the next ideas.",
       },
       {
         id: "titles",

@@ -64,6 +64,7 @@ export default function Shell() {
   const {
     ready,
     userEmail,
+    isAdmin,
     mode,
     view,
     tab,
@@ -105,7 +106,8 @@ export default function Shell() {
   const score =
     brand && data.responses.length ? r1(computeAll(brand, data.responses).blended.geo) : null;
   const area = AREAS.find((a) => a.id === view) || AREAS[0];
-  const visible = AREAS.filter((a) => !client || a.client);
+  // Admin is for account admins only; client view shows client areas only.
+  const visible = AREAS.filter((a) => (!client || a.client) && (a.id !== "admin" || isAdmin));
 
   const live = ENGINES.filter((e) => engines[e]);
   const offline = ENGINES.filter((e) => !engines[e]);
@@ -335,7 +337,7 @@ export default function Shell() {
             <div className="card">Loading…</div>
           ) : !brand ? (
             <div className="card">
-              No clients yet. Create one in <b>Admin → Add a client</b> (Team view).
+              No clients yet. {isAdmin ? <>Create one in <b>Admin → Add a client</b>.</> : "Ask an account admin to add one."}
             </div>
           ) : (
             <>
@@ -375,7 +377,11 @@ export default function Shell() {
                   {tabHint && <p className="tab-hint">{tabHint}</p>}
                 </>
               )}
-              <AreaBody area={view} tab={tab} />
+              {view === "admin" && !isAdmin ? (
+                <div className="card muted">Admin is for account admins. Ask one if you need a client added or a setting changed.</div>
+              ) : (
+                <AreaBody area={view} tab={tab} />
+              )}
             </>
           )}
         </div>
