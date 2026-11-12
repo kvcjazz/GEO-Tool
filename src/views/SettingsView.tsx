@@ -354,9 +354,94 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       measureNewQuestions();
   }
 
-  async function delPrompt(id: string) {
-    await sb.from("geo_prompts").delete().eq("id", id);
-    toast("Deleted");
+  /** How many measured answers (in any check) a question has. */
+  async function answerCount(id: string): Promise<number> {
+    const { count } = await sb
+      .from("geo_responses")
+      .select("id", { count: "exact", head: true })
+      .eq("prompt_id", id);
+    return count || 0;
+  }
+
+  /** Next free P-code, so a new question never reuses an existing code. */
+  function nextCode(): string {
+    const max = prompts.reduce((m, p) => Math.max(m, parseInt(p.code.replace(/\D/g, ""), 10) || 0), 0);
+    return "P" + String(max + 1).padStart(2, "0");
+  }
+
+  // Same words, ignoring case, spacing and punctuation: a typo fix, not a new question.
+  const sameWords = (a: string, b: string) =>
+    a.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim() ===
+    b.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+  /**
+   * Rewording a question that already has answers would make its trend, the
+   * gained/lost list and PR before/after compare different questions. So the
+   * new wording becomes a new question and the old one is retired (kept, with
+   * its history, but no longer measured).
+   */
+  async function rewordPrompt(p: Prompt, text: string, input: HTMLInputElement) {
+    const t = text.trim();
+    if (!t) {
+      input.value = p.text;
+      return;
+    }
+    if (sameWords(t, p.text)) return savePrompt(p.id, "text", t);
+    const n = await answerCount(p.id);
+    if (!n) return savePrompt(p.id, "text", t);
+    if (
+      !window.confirm(
+        `“${p.text}” already has ${n} measured answer${n === 1 ? "" : "s"}. Changing the wording ` +
+          "makes it a different question, so comparing it with earlier checks would mislead.\n\n" +
+          "Save the new wording as a new question and retire the old one? The old one keeps its " +
+          "history but stops being measured. Choose Cancel to keep the old wording.",
+      )
+    ) {
+      input.value = p.text;
+      return;
+    }
+    const row = {
+      brand_id: brand!.id,
+      code: nextCode(),
+      ptype: p.ptype,
+      text: t,
+      active: true,
+      sort: p.sort,
+      seo_seed: p.seo_seed,
+      seo_demand: p.seo_demand,
+      seo_demand_kind: p.seo_demand_kind,
+      replaces: p.id,
+    };
+    let { error } = await sb.from("geo_prompts").insert(row);
+    // Before the "replaces" column exists, save the new question without the link.
+    if (error && /replaces/.test(error.message)) {
+      const { replaces: _drop, ...rest } = row;
+      void _drop;
+      ({ error } = await sb.from("geo_prompts").insert(rest));
+    }
+    if (error) {
+      input.value = p.text;
+      return toast("Not saved: " + error.message);
+    }
+    await sb.from("geo_prompts").update({ active: false }).eq("id", p.id);
+    toast(`Saved as a new question; ${p.code} retired`);
+    await reload();
+    offerToMeasure(1);
+  }
+
+  async function delPrompt(p: Prompt) {
+    const n = await answerCount(p.id);
+    const ok = window.confirm(
+      n
+        ? `Delete “${p.text}” and its ${n} measured answer${n === 1 ? "" : "s"}? Past scores and ` +
+            "reports change, and this can't be undone.\n\nTo stop measuring it but keep its " +
+            "history, choose Cancel and untick Active instead."
+        : `Delete “${p.text}”? It has no measured answers yet.`,
+    );
+    if (!ok) return;
+    const { error } = await sb.from("geo_prompts").delete().eq("id", p.id);
+    if (error) return toast("Not deleted: " + error.message);
+    toast("Question deleted");
     await reload();
   }
 
@@ -1213,9 +1298,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                       <input
                         defaultValue={p.text}
                         style={{ width: "100%", minWidth: 240 }}
+                        aria-label={`Wording of ${p.code}`}
                         onBlur={(e) => {
-                          if (e.target.value !== p.text)
-                            savePrompt(p.id, "text", e.target.value);
+                          if (e.target.value !== p.text) void rewordPrompt(p, e.target.value, e.target);
                         }}
                       />
                       {p.seo_seed && (
@@ -1234,8 +1319,8 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                       />
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      <button className="btn sm danger" onClick={() => delPrompt(p.id)}>
-                        Del
+                      <button className="btn sm danger" onClick={() => delPrompt(p)}>
+                        Delete…
                       </button>
                     </td>
                   </tr>

@@ -183,8 +183,11 @@ export default function ListeningView() {
   }
 
   async function delMention(id: string) {
-    await sb.from("geo_mentions").delete().eq("id", id);
-    toast("Removed");
+    const x = data.mentions.find((m) => m.id === id);
+    if (!window.confirm(`Remove the mention from ${x?.source || "this source"}? This can't be undone.`)) return;
+    const { error } = await sb.from("geo_mentions").delete().eq("id", id);
+    if (error) return toast("Not removed: " + error.message);
+    toast("Mention removed");
     await reload();
   }
 

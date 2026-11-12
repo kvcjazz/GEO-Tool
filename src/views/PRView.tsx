@@ -238,8 +238,19 @@ export default function PRView() {
   }
 
   async function delPR(id: string) {
-    await sb.from("geo_pr_activity").delete().eq("id", id);
-    toast("Removed");
+    const p = data.pr.find((x) => x.id === id);
+    const cites = data.responses.filter((r) => r.cited_pr_id === id).length;
+    if (
+      !window.confirm(
+        `Remove the ${p?.outlet || "placement"} placement${p?.activity_date ? " of " + p.activity_date : ""}?` +
+          (cites ? ` It is credited with ${cites} AI citation${cites === 1 ? "" : "s"}, which will lose that credit.` : "") +
+          " This can't be undone.",
+      )
+    )
+      return;
+    const { error } = await sb.from("geo_pr_activity").delete().eq("id", id);
+    if (error) return toast("Not removed: " + error.message);
+    toast("Placement removed");
     await reload();
   }
 
