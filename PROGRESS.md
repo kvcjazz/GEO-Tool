@@ -49,3 +49,36 @@ reused untouched.
 - Optional roadmap (from the handoff): real per-client accounts + roles, branded
   PDF/report exports, moving AI logic into Next.js route handlers, adding the
   remaining engine API keys in Supabase.
+
+## Parked ideas
+
+### First-party AI platform insights panel (banked 2026-11-12)
+
+**Idea:** a per-brand panel that records the AI platforms' *own* visibility
+numbers and charts them next to each engine's GEO score, to validate the
+tool's prompt-level tracking against first-party data in client reports.
+
+**Landscape (as of Nov 2026, mostly from third-party coverage):**
+
+| Platform | Official tool | Data available |
+|---|---|---|
+| ChatGPT | Business Hub (launched ~10 Nov 2026) | Mentions, website clicks, discovery topics (rolling 28 days). Also manages business profile + product feeds. **No API/export.** Mentions only count when the website is referenced; clicks ≠ visits. |
+| Copilot / Bing | Bing Webmaster Tools → AI Performance (preview, Feb 2026; Intents/Topics/Citation Share/Compare added Jun 2026) | Citation counts, cited pages, grounding queries. No CTR. API coverage unconfirmed. |
+| Google AI Overviews / AI Mode | Search Console → Generative AI report (beta, Jun 2026, staged rollout, UK first) | Impressions by page/country/date/device. No clicks/queries yet; AIO + AI Mode combined. Not in API as of Jun 2026. |
+| Perplexity, Claude, Gemini app, Grok | None found | Third-party trackers only. |
+
+**Proposed scope:**
+
+1. New table (e.g. `geo_platform_insights`: brand_id, platform, period_end,
+   mentions/citations/impressions, clicks, topics jsonb, notes) with RLS
+   matching the other `geo_*` tables.
+2. Manual monthly entry form per brand (aligned with the monthly snapshot cron).
+3. Dashboard chart: first-party numbers vs. that engine's GEO score over time.
+4. Business Hub "discovery topics" → suggested prompts in the Prompt Set.
+5. Backlog playbook item: "Claim & verify ChatGPT Business Hub / Bing WMT /
+   Search Console" and keep business details consistent.
+6. Later: GA4 `utm_source=chatgpt.com` clicks via the GA4 API; replace manual
+   entry with an edge function on the existing cron if/when OpenAI, Bing or
+   Google expose this data via API.
+
+Re-check each platform's current API/export status before building.
