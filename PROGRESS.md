@@ -331,3 +331,17 @@ with a message or save without the extra field).
   checked: Overview team/client, Answers filters, Competitors, Action plan
   team/client, Ideas dismiss, new-client wizard.
 - Not verified signed in against live data (no sign-in from the container).
+
+## 2026-11-12 — Deployed live
+
+- Migrations applied: `ai_usage_and_check_guards`, `ux_plan_answers_samples`
+  (cron now `select public.geo_monthly_snapshots(3, 7);`, using each client's
+  `measure_samples`).
+- Edge functions deployed from this branch (verify_jwt unchanged):
+  geo-entities v2 (also counts billed failed reads in `entities_attempts`, so
+  the 2-minute backfill stops after 3), geo-measure v7, geo-advise v16,
+  geo-classify-sources v4, geo-targets v4, geo-listen v11, geo-radar v11,
+  geo-coverage-meta v5; `retired` stub over geo-run (v11, 410).
+- Boot-checked each with a harmless request via pg_net (expected 400/401/410
+  answers from the new code). Not yet seen: a real measurement or AI call
+  writing to `geo_ai_usage` — check Admin → AI spend after the next check.
