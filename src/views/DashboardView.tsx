@@ -18,6 +18,8 @@ import { r1, sum } from "@/lib/format";
 import { reachSplit } from "@/lib/questions";
 import { explainEngines } from "@/lib/engineExplainer";
 import { gapSources, isTarget } from "@/lib/sources";
+import { compareChecks, needsAttention, previousCheck } from "@/lib/changes";
+import { useV2Answers } from "@/state/useV2Answers";
 import type { Run } from "@/lib/types";
 import type { DateRange } from "@/lib/types";
 
@@ -45,6 +47,7 @@ function filterRuns(runs: Run[], dr: DateRange, currentRun: Run | null): Run[] {
 
 export default function DashboardView() {
   const { brand, data, dateRange, mode, setView, setAnswersFilter } = useAppState();
+  const answers = useV2Answers();
   if (!brand) return null;
   const { currentRun, responses, runs, pr, sov, history } = data;
 
@@ -112,6 +115,16 @@ export default function DashboardView() {
   const baselineRun = comparable.find((r) => !r.is_current && runScore(r) != null);
   const baseline = baselineRun ? runScore(baselineRun) : null;
   const delta = baseline != null ? r1(blended.geo - baseline) : null;
+  // "Change" means vs the previous check everywhere (All clients, Report);
+  // the change since the first comparable check is shown second.
+  const prevRun = previousCheck(currentRun, runs, history);
+  const prevScore = prevRun ? runScore(prevRun) : null;
+  const lastDelta = prevScore != null ? r1(blended.geo - prevScore) : null;
+  const cmp = compareChecks(brand, currentRun, prevRun, answers, data.prompts);
+  const attention = needsAttention(brand, responses, data.prompts);
+  const promptText = new Map(data.prompts.map((p) => [p.id, p.text]));
+  const shortDate = (d: string) =>
+    new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
   const methodChanged = runs.some((r) => !sameMethod(r));
   const firstOfMethod = comparable[0]?.run_date;
   const bm = brandMentionsTotal(responses);
@@ -157,14 +170,25 @@ export default function DashboardView() {
     .filter((g) => isTarget(g.domain, data.sourceKinds))
     .slice(0, 3);
   const topActions = data.opps
-    .filter((o) => o.status !== "Done")
+    .filter((o) => o.status !== "Done" && o.status !== "Parked")
     .map((o) => ({ ...o, prio: o.effort ? o.impact / o.effort : 0 }))
     .sort((a, b) => b.prio - a.prio)
     .slice(0, 3);
-  const seeAnswers = (f: "unbranded" | "branded") => {
+  const seeAnswers = (f: "unbranded" | "branded" | "missed" | "inaccurate") => {
     setAnswersFilter(f);
     setView("answers", "answers");
   };
+  const openAction = (id: string) => {
+    setView("plan", "actions");
+    // The plan renders after the view switch; then bring the action into view.
+    setTimeout(() => {
+      const el = document.getElementById("action-" + id);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.classList.add("flash");
+      setTimeout(() => el?.classList.remove("flash"), 1600);
+    }, 80);
+  };
+  const signed = (v: number) => (v > 0 ? `▲ +${v}` : v < 0 ? `▼ ${Math.abs(v)}` : "■ 0");
 
   return (
     <>
@@ -220,9 +244,14 @@ export default function DashboardView() {
             {r1(blended.geo)}
             <small>/100</small>
           </div>
-          {delta != null && (
-            <div className="delta-up" style={delta < 0 ? { color: "#f0a3a3" } : undefined}>
-              {delta < 0 ? `▼ ${delta}` : `▲ +${delta}`} pts since baseline ({baseline})
+          {lastDelta != null && prevRun && (
+            <div className="delta-up" style={lastDelta < 0 ? { color: "#f0a3a3" } : undefined}>
+              {signed(lastDelta)} pts vs last check ({shortDate(prevRun.run_date)})
+            </div>
+          )}
+          {delta != null && baselineRun && baselineRun.id !== prevRun?.id && (
+            <div style={{ marginTop: 2, fontSize: 12, color: "#c4d2ee" }}>
+              {signed(delta)} since the first check ({shortDate(baselineRun.run_date)}, {baseline})
             </div>
           )}
           {conf && (
@@ -237,6 +266,117 @@ export default function DashboardView() {
           )}
         </div>
       </div>
+
+      {(prevRun || attention.errors.length > 0 || attention.missedToOthers.length > 0) && (
+        <div className="two">
+          <div className="card">
+            <h3>{prevRun ? `What changed since ${shortDate(prevRun.run_date)}` : "What changed"}</h3>
+            {!prevRun ? (
+              <p className="muted" style={{ fontSize: 13 }}>
+                This is the first check measured this way, so there is nothing to compare yet.
+              </p>
+            ) : !answers ? (
+              <p className="muted" style={{ fontSize: 13 }}>Comparing with the last check…</p>
+            ) : !cmp.gained.length && !cmp.lost.length ? (
+              <p style={{ fontSize: 13 }}>
+                The same questions name {brand.name} as last time — no question gained or lost an
+                engine.
+              </p>
+            ) : (
+              <>
+                {cmp.gained.length > 0 && (
+                  <div className="change-list">
+                    <b style={{ color: "var(--green)" }}>
+                      ▲ Named by more engines ({cmp.gained.length})
+                    </b>
+                    <ul>
+                      {cmp.gained.slice(0, 3).map((q) => (
+                        <li key={q.id}>{q.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {cmp.lost.length > 0 && (
+                  <div className="change-list">
+                    <b style={{ color: "var(--red)" }}>▼ Named by fewer engines ({cmp.lost.length})</b>
+                    <ul>
+                      {cmp.lost.slice(0, 3).map((q) => (
+                        <li key={q.id}>{q.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {cmp.prevReach && (
+                  <p className="legend-note">
+                    Found by new buyers: {cmp.prevReach.newBuyers}% → {reach.newBuyers.pct}% on the
+                    same questions and engines.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+          <div className="card">
+            <h3>Needs attention</h3>
+            {!attention.errors.length && !attention.negative.length && !attention.missedToOthers.length ? (
+              <p style={{ fontSize: 13 }}>
+                Nothing urgent: no AI answer gets {brand.name}&#39;s facts wrong or is negative about
+                it.
+              </p>
+            ) : (
+              <>
+                {attention.errors.length > 0 && (
+                  <div className="action-item">
+                    <span className="k" style={{ color: "var(--red)" }}>
+                      {attention.errors.some((r) => r.accuracy === "Major error") ? "Major" : "Minor"} accuracy
+                    </span>
+                    <b>
+                      {attention.errors.length} answer{attention.errors.length === 1 ? " gets" : "s get"}{" "}
+                      {brand.name}&#39;s facts wrong
+                    </b>
+                    <span className="d">
+                      {attention.errors[0].engine}: “{promptText.get(attention.errors[0].prompt_id) || ""}”
+                      {attention.errors[0].notes ? ` — ${attention.errors[0].notes.replace(/^Accuracy:\s*/, "")}` : ""}
+                    </span>
+                    {!client && (
+                      <button type="button" className="linkbtn" onClick={() => seeAnswers("inaccurate")}>
+                        See and correct →
+                      </button>
+                    )}
+                  </div>
+                )}
+                {attention.missedToOthers.length > 0 && (
+                  <div className="action-item">
+                    <span className="k" style={{ color: "#6e4a0c" }}>Lost to others</span>
+                    <b>
+                      {attention.missedToOthers.length} buyer question
+                      {attention.missedToOthers.length === 1 ? "" : "s"} name other brands but never{" "}
+                      {brand.name}
+                    </b>
+                    <span className="d">“{attention.missedToOthers[0].text}”</span>
+                    {!client && (
+                      <button type="button" className="linkbtn" onClick={() => seeAnswers("missed")}>
+                        See these answers →
+                      </button>
+                    )}
+                  </div>
+                )}
+                {attention.negative.length > 0 && (
+                  <div className="action-item">
+                    <span className="k" style={{ color: "var(--red)" }}>Tone</span>
+                    <b>
+                      {attention.negative.length} answer{attention.negative.length === 1 ? " is" : "s are"}{" "}
+                      negative about {brand.name}
+                    </b>
+                    <span className="d">
+                      {attention.negative[0].engine}: “{promptText.get(attention.negative[0].prompt_id) || ""}”
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="two">
         <div className="card">
@@ -255,11 +395,20 @@ export default function DashboardView() {
             </div>
           )}
           {topActions.map((o) => (
-            <div className="action-item" key={o.id}>
-              <span className="k">{o.status || "Not started"}</span>
+            <button
+              type="button"
+              className="action-item action-link"
+              key={o.id}
+              onClick={() => openAction(o.id)}
+            >
+              <span className="k">
+                {o.status || "Not started"}
+                {o.owner ? ` · ${o.owner}` : ""}
+                {o.due_date ? ` · due ${shortDate(o.due_date)}` : ""}
+              </span>
               <b>{o.title}</b>
-              {o.linked_gap && <span className="d">Moves {o.linked_gap}</span>}
-            </div>
+              {o.linked_gap && !client && <span className="d">Moves {o.linked_gap}</span>}
+            </button>
           ))}
           {!topActions.length && !gaps.length && (
             <p className="muted" style={{ fontSize: 13 }}>
@@ -426,6 +575,21 @@ export default function DashboardView() {
       </div>
 
       <div className="two">
+        {client ? (
+          <div className="card">
+            <h3>How the score works</h3>
+            <p style={{ fontSize: 13, lineHeight: 1.55 }}>
+              The Luminous GEO Score (0–100) sums up how visible {brand.name} is when buyers ask AI
+              assistants about this market: mainly how often it is named and recommended, how much of
+              the conversation it gets compared with other brands, and whether its own and earned
+              sources are cited — with tone and accuracy counting too. Each AI engine counts in
+              proportion to how widely it is used.
+            </p>
+            <div className="legend-note">
+              PR influence: <b>{prCited}</b> of {pr.length} placements cited by AI.
+            </div>
+          </div>
+        ) : (
         <div className="card">
           <h3>How the score is made up</h3>
           <table>
@@ -454,6 +618,7 @@ export default function DashboardView() {
             <b>Coverage &amp; impact</b>.
           </div>
         </div>
+        )}
         <div>
           <StrategyBanner />
         </div>

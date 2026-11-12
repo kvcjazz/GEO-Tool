@@ -1,5 +1,7 @@
 // Placeholder deployed over retired edge functions so their URLs stop doing
 // anything. Deployed (verify_jwt on) as:
+//   - geo-run        v1 per-question measurement (primed questions); still live
+//                    and callable until 2026-11 though nothing used it
 //   - geo-run-batch  v1 measurement orchestrator (primed questions, no login needed)
 //   - geo-publish    wrote the old single-file app to Storage with the service role
 //   - geo-pilot      served the old single-file app from the geo_app table

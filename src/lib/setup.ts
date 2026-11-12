@@ -1,5 +1,6 @@
 import type { Brand, Competitor, ContextItem, MediaTarget, Prompt, SearchTerm } from "./types";
 import { FACT_FIELDS, factSheetFilled } from "./factSheet";
+import { namesBrand } from "./questions";
 
 // The Client setup checklist: what a client needs before the monthly check
 // gives trustworthy numbers. Each step anchors to its section on the page.
@@ -35,6 +36,10 @@ export function setupSteps(
     if (seen.has(k)) dupes.add(p.text.trim());
     seen.add(k);
   }
+  // Questions that name the client only test recognition; "Found by new
+  // buyers" needs most questions not to name it.
+  const branded = active.filter((p) => namesBrand(p.text, brand)).length;
+  const tooBranded = active.length >= 3 && (active.length - branded) / active.length < 2 / 3;
   // Answers often drop a suffix ("Tyto" for "Tyto PR"); a multi-word name with
   // no alias is likely to be missed when an engine does name it.
   const noShortName = d.competitors.filter(
@@ -102,8 +107,12 @@ export function setupSteps(
           ? `${active.length} active. ${dupes.size} duplicated: ${[...dupes]
               .map((t) => `“${t}”`)
               .join(", ")}.`
-          : `${active.length} active.`,
-      status: !active.length || dupes.size ? "attention" : "done",
+          : tooBranded
+            ? `${active.length} active, but ${branded} name ${brand.name}. Questions that name the client ` +
+              "only show whether AI recognises it — aim for at least two thirds that don't, so " +
+              "“Found by new buyers” has enough to measure. ✨ Suggest questions drafts unbranded ones."
+            : `${active.length} active, ${active.length - branded} of them not naming ${brand.name}.`,
+      status: !active.length || dupes.size || tooBranded ? "attention" : "done",
     },
     {
       id: "media",

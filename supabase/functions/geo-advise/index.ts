@@ -53,6 +53,8 @@ type Brief = {
 };
 
 type Body = {
+  /** The client, used only to label AI spend (geo_ai_usage). */
+  brand_id?: string | null;
   mode?: string;
   /** "search": draft every suggestion from brief.search_demand. */
   focus?: string;
@@ -219,7 +221,11 @@ async function suggest(body: Body): Promise<Response> {
   if (search && !search.length) {
     return json({ error: "No search terms to work from — import search data first." }, 400);
   }
-  const out = await callAnalyst(suggestPrompt(br, count, search), 8000);
+  const out = await callAnalyst(suggestPrompt(br, count, search), 8000, {
+    fn: "geo-advise",
+    purpose: search ? "suggest-questions-seo" : "suggest-questions",
+    brandId: body.brand_id,
+  });
   if (out.error) return json({ error: "The AI model call failed: " + out.error }, 502);
 
   const parsed = parseJson<{ note?: string; prompts?: Record<string, unknown>[] }>(out.text);
@@ -311,7 +317,7 @@ function tailorPrompt(b: Body, br: Brief): string {
 
 async function tailor(body: Body): Promise<Response> {
   const br = briefOf(body);
-  const out = await callAnalyst(tailorPrompt(body, br), 1500);
+  const out = await callAnalyst(tailorPrompt(body, br), 1500, { fn: "geo-advise", purpose: "tailor", brandId: body.brand_id });
   if (out.error || !out.text.trim()) {
     return json({
       guidance: tailorTemplate(body, br),
@@ -373,7 +379,7 @@ async function summary(body: Body): Promise<Response> {
   const c = br.client;
   const filled = SUMMARY_FIELDS.some(([k]) => k !== "name" && String(c[k] ?? "").trim());
   if (!filled) return json({ error: "No strategy entered in Client setup yet." }, 400);
-  const out = await callAnalyst(summaryPrompt(br), 1500);
+  const out = await callAnalyst(summaryPrompt(br), 1500, { fn: "geo-advise", purpose: "strategy-summary", brandId: body.brand_id });
   if (out.error) return json({ error: "The AI model call failed: " + out.error }, 502);
   const parsed = parseJson<{ headline?: unknown; points?: unknown }>(out.text);
   const headline = String(parsed?.headline ?? "").trim();

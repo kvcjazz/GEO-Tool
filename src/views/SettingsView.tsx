@@ -15,6 +15,8 @@ import { callFn } from "@/lib/callFn";
 import { AdviseSuggestSchema } from "@/lib/schemas";
 import { extractFileText } from "@/lib/fileText";
 import UsersAdmin from "@/views/UsersAdmin";
+import AiSpendPanel from "@/components/AiSpendPanel";
+import NewClientWizard from "@/components/NewClientWizard";
 import CategoryBrandsPanel from "@/components/CategoryBrandsPanel";
 import { setupSteps } from "@/lib/setup";
 import { SeoChip } from "@/components/ui";
@@ -45,7 +47,6 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     toast,
     reload,
     loadBrands,
-    selectBrand,
     setView,
     patchBrand,
     samples,
@@ -53,9 +54,11 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     engines,
     archivedBrands,
     measureNewQuestions,
+    missingMeasurements,
     liveEngineCount,
   } = useAppState();
 
+  const [wizard, setWizard] = useState(false);
   const [strategy, setStrategy] = useState({
     objective: "",
     audience: "",
@@ -335,22 +338,111 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
   function offerToMeasure(n: number) {
     const run = data.currentRun;
     if (!run || run.method !== "v2" || !liveEngineCount) return;
-    const total = n * liveEngineCount;
+    // "Measure now" fills every gap in the check, so anything already missing
+    // (failed or stopped measurements) is measured too: say so in the total.
+    const others = missingMeasurements;
+    const total = n * liveEngineCount + others;
     if (
       window.confirm(
         `Measure the ${n} new question${n === 1 ? "" : "s"} now, so ${
           n === 1 ? "it shows" : "they show"
         } in this month's AI answers? That's ${total} measurement${total === 1 ? "" : "s"} ` +
-          `(${liveEngineCount} engines, ${samples} samples each) and uses AI credit — you can stop ` +
+          (others ? `(including ${others} already missing from this check) ` : "") +
+          `on ${liveEngineCount} engines, ${samples} samples each, and uses AI credit — you can stop ` +
           "it at any time. Choose Cancel to wait for the next monthly check.",
       )
     )
       measureNewQuestions();
   }
 
-  async function delPrompt(id: string) {
-    await sb.from("geo_prompts").delete().eq("id", id);
-    toast("Deleted");
+  /** How many measured answers (in any check) a question has. */
+  async function answerCount(id: string): Promise<number> {
+    const { count } = await sb
+      .from("geo_responses")
+      .select("id", { count: "exact", head: true })
+      .eq("prompt_id", id);
+    return count || 0;
+  }
+
+  /** Next free P-code, so a new question never reuses an existing code. */
+  function nextCode(): string {
+    const max = prompts.reduce((m, p) => Math.max(m, parseInt(p.code.replace(/\D/g, ""), 10) || 0), 0);
+    return "P" + String(max + 1).padStart(2, "0");
+  }
+
+  // Same words, ignoring case, spacing and punctuation: a typo fix, not a new question.
+  const sameWords = (a: string, b: string) =>
+    a.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim() ===
+    b.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+  /**
+   * Rewording a question that already has answers would make its trend, the
+   * gained/lost list and PR before/after compare different questions. So the
+   * new wording becomes a new question and the old one is retired (kept, with
+   * its history, but no longer measured).
+   */
+  async function rewordPrompt(p: Prompt, text: string, input: HTMLInputElement) {
+    const t = text.trim();
+    if (!t) {
+      input.value = p.text;
+      return;
+    }
+    if (sameWords(t, p.text)) return savePrompt(p.id, "text", t);
+    const n = await answerCount(p.id);
+    if (!n) return savePrompt(p.id, "text", t);
+    if (
+      !window.confirm(
+        `“${p.text}” already has ${n} measured answer${n === 1 ? "" : "s"}. Changing the wording ` +
+          "makes it a different question, so comparing it with earlier checks would mislead.\n\n" +
+          "Save the new wording as a new question and retire the old one? The old one keeps its " +
+          "history but stops being measured. Choose Cancel to keep the old wording.",
+      )
+    ) {
+      input.value = p.text;
+      return;
+    }
+    const row = {
+      brand_id: brand!.id,
+      code: nextCode(),
+      ptype: p.ptype,
+      text: t,
+      active: true,
+      sort: p.sort,
+      seo_seed: p.seo_seed,
+      seo_demand: p.seo_demand,
+      seo_demand_kind: p.seo_demand_kind,
+      replaces: p.id,
+    };
+    let { error } = await sb.from("geo_prompts").insert(row);
+    // Before the "replaces" column exists, save the new question without the link.
+    if (error && /replaces/.test(error.message)) {
+      const { replaces: _drop, ...rest } = row;
+      void _drop;
+      ({ error } = await sb.from("geo_prompts").insert(rest));
+    }
+    if (error) {
+      input.value = p.text;
+      return toast("Not saved: " + error.message);
+    }
+    await sb.from("geo_prompts").update({ active: false }).eq("id", p.id);
+    toast(`Saved as a new question; ${p.code} retired`);
+    await reload();
+    offerToMeasure(1);
+  }
+
+  async function delPrompt(p: Prompt) {
+    const n = await answerCount(p.id);
+    const ok = window.confirm(
+      n
+        ? `Delete “${p.text}” and its ${n} measured answer${n === 1 ? "" : "s"}? Past scores and ` +
+            "reports change, and this can't be undone.\n\nTo stop measuring it but keep its " +
+            "history, choose Cancel and untick Active instead."
+        : `Delete “${p.text}”? It has no measured answers yet.`,
+    );
+    if (!ok) return;
+    const { error } = await sb.from("geo_prompts").delete().eq("id", p.id);
+    if (error) return toast("Not deleted: " + error.message);
+    toast("Question deleted");
     await reload();
   }
 
@@ -571,8 +663,12 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
       data.currentRun ? data.responses.map((r) => r.prompt_id + "|" + r.engine) : [],
     );
     const rows: ResponseInsert[] = [];
+    // Only connected engines: a blank row for an engine nobody can measure
+    // would be scored as "not named" and drag the score down.
+    const live = ENGINES.filter((e) => engines[e]);
+    if (!live.length) return toast("No AI engines are connected");
     active.forEach((p) =>
-      ENGINES.forEach((e) => {
+      live.forEach((e) => {
         if (!have.has(p.id + "|" + e))
           rows.push({
             run_id: runId!,
@@ -591,51 +687,6 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
     toast(rows.length + " new rows added (existing data kept)");
     await reload();
     setView("answers", "answers");
-  }
-
-  async function createClient() {
-    const name = window.prompt("New client name:");
-    if (!name) return;
-    const nm = name.trim();
-    const { data: newBrand, error } = await sb
-      .from("geo_brands")
-      .insert({ name: nm, is_client: true })
-      .select()
-      .single();
-    if (error || !newBrand) return toast("Failed");
-    const bid = newBrand.id;
-    await sb.from("geo_runs").insert({
-      brand_id: bid,
-      label: monthLabel() + " (Current)",
-      run_date: todayISO(),
-      is_current: true,
-    });
-    const starter: [string, string, string][] = [
-      ["P01", "Category", "best " + nm + " alternatives"],
-      ["P02", "Category", "top providers in " + nm + "'s category"],
-      ["P03", "Comparison", nm + " vs competitors"],
-      ["P04", "Brand/Entity", "what is " + nm],
-      ["P05", "Brand/Entity", "is " + nm + " any good"],
-      ["P06", "Brand/Entity", nm + " reviews"],
-      ["P07", "Problem-led", "how to choose a provider in " + nm + "'s category"],
-      ["P08", "Buying-intent", nm + " pricing"],
-    ];
-    await sb.from("geo_prompts").insert(
-      starter.map((s, i) => ({
-        brand_id: bid,
-        code: s[0],
-        ptype: s[1],
-        text: s[2],
-        sort: i,
-        active: true,
-      })),
-    );
-    toast(
-      "Client scaffolded: starter run + 8 prompts. Add strategy, refine prompts, then Generate capture grid.",
-    );
-    await loadBrands();
-    await selectBrand(bid);
-    setView("setup");
   }
 
   async function archiveClient() {
@@ -1182,7 +1233,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                 <tr>
                   <th>ID</th>
                   <th>Type</th>
-                  <th>Prompt</th>
+                  <th>Question</th>
                   <th>Active</th>
                   <th></th>
                 </tr>
@@ -1207,9 +1258,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                       <input
                         defaultValue={p.text}
                         style={{ width: "100%", minWidth: 240 }}
+                        aria-label={`Wording of ${p.code}`}
                         onBlur={(e) => {
-                          if (e.target.value !== p.text)
-                            savePrompt(p.id, "text", e.target.value);
+                          if (e.target.value !== p.text) void rewordPrompt(p, e.target.value, e.target);
                         }}
                       />
                       {p.seo_seed && (
@@ -1228,8 +1279,8 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
                       />
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      <button className="btn sm danger" onClick={() => delPrompt(p.id)}>
-                        Del
+                      <button className="btn sm danger" onClick={() => delPrompt(p)}>
+                        Delete…
                       </button>
                     </td>
                   </tr>
@@ -1252,7 +1303,7 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
               onChange={(e) => setNewPrompt(e.target.value)}
             />
             <button className="btn sm" onClick={addPrompt}>
-              Add prompt
+              Add question
             </button>
           </div>
           <div
@@ -1307,9 +1358,9 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         style={{ marginBottom: 16, borderLeft: "5px solid var(--blue)" }}
       >
         <h3>
-          Client PR Profile{" "}
+          PR profile{" "}
           <span className="muted" style={{ textTransform: "none", fontWeight: 500 }}>
-            — powers the PR Planning radar
+            — shapes the ideas in Plan → Ideas inbox
           </span>
         </h3>
         <div className="legend-note">
@@ -1584,17 +1635,20 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
           <div className="card stack" style={{ marginBottom: 16 }}>
             <h3>Clients</h3>
             <div className="legend-note">
-              Adds a client with 8 starter questions. Then work through Client setup and run
-              its first monthly check.
+              A short form: who the client is, who buys, and starter questions drafted from it.
+              Then finish Client setup and run its first monthly check.
             </div>
             <div className="flex">
-              <button className="btn sm" onClick={createClient}>
+              <button className="btn sm" onClick={() => setWizard(true)} disabled={wizard}>
                 + Add a client
               </button>
             </div>
           </div>
+          {wizard && <NewClientWizard onDone={() => setWizard(false)} />}
       {/* Users & access (account-wide) */}
       <UsersAdmin />
+      {/* AI spend (account-wide, admins) */}
+      <AiSpendPanel />
           <div className="set-grid" style={{ marginBottom: 16 }}>
         {/* Metric weights */}
         <div className="card">
@@ -1642,38 +1696,46 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         <div className="card stack" style={{ gridColumn: "1/-1" }}>
           <h3>AI engines &amp; measurement</h3>
           <div className="legend-note">
-            Live engines are queried automatically; the others switch on the moment their
-            API key is added. Every auto-run samples each prompt several times and records
-            a <b>confidence</b> rating. A <b>monthly snapshot</b> runs automatically on the
-            1st.
+            Every question is put to each live engine with web search, several times over, and
+            the answers are compared to give a <b>confidence</b> rating. A monthly check runs
+            automatically on the 1st for every active client (skipped if the client was checked
+            in the previous 7 days).
           </div>
           <div className="flex" style={{ marginTop: 8 }}>
             {ENGINES.map((en) => {
               const live = engines[en];
               return (
                 <span key={en} className={`tag ${live ? "t-yes" : "t-na"}`}>
-                  {en} {live ? "● live" : "○ needs key"}
+                  {en} {live ? "● live" : "○ not connected"}
                 </span>
               );
             })}
           </div>
-          <div className="wrow" style={{ marginTop: 10, maxWidth: 340 }}>
-            <label>Samples per question</label>
-            <input
-              type="number"
-              min={1}
-              max={5}
+          <div className="wrow" style={{ marginTop: 10, maxWidth: 420 }}>
+            <label htmlFor="samples-per-question">Times each question is asked — {brand.name}</label>
+            <select
+              style={{ width: "auto", minWidth: 280 }}
+              id="samples-per-question"
               value={samples}
-              onChange={(e) =>
-                setSamples(Math.max(1, Math.min(5, +e.target.value || 3)))
-              }
-            />
+              onChange={(e) => setSamples(+e.target.value)}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                  {n === 1 ? " (cheapest, no confidence rating)" : n === 3 ? " (recommended)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="legend-note">
-            To add an engine, put its key in Supabase → Project Settings → Edge Functions
-            secrets: <b>OPENAI_API_KEY</b>, <b>GEMINI_API_KEY</b>,{" "}
-            <b>PERPLEXITY_API_KEY</b>, <b>XAI_API_KEY</b> (Grok). An engine without a
-            key is left out of the score rather than counted as zero.
+            Saved for this client and used by the automatic monthly check too. Each extra time
+            adds one web-searched answer per question per engine, so 3 costs about three times
+            as much as 1.
+          </div>
+          <div className="legend-note">
+            An engine that isn&#39;t connected is left out of the score rather than counted as
+            zero. Connecting one needs its API key adding by whoever manages the Supabase
+            project.
             <br />
             <b>Microsoft Copilot isn&#39;t measured:</b> it has no public API. It runs on
             OpenAI models with Bing search, so ChatGPT is the closest guide to it.
@@ -1681,14 +1743,14 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         </div>
         {/* Data tools */}
         <div className="card stack" style={{ gridColumn: "1/-1" }}>
-          <h3>Data tools</h3>
+          <h3>Enter answers by hand</h3>
           <div className="legend-note">
-            For entering answers by hand: adds blank rows only for question × engine combinations that don&#39;t
+            Only for answers you collect yourself (for example from an engine that isn&#39;t connected). Adds blank rows to fill in on AI answers → Review / override, only for question × connected engine pairs that don&#39;t
             have one yet — it never overwrites or deletes existing responses.
           </div>
           <div className="flex">
             <button className="btn sm" onClick={generateCapture}>
-              Generate / refresh capture grid
+              Add blank rows to fill in
             </button>
           </div>
         </div>

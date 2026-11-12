@@ -7,6 +7,7 @@
 // Whether the client itself is among them is decided in code (names()), as in
 // measurement, so it can't be missed or invented.
 import { callAnalyst, parseJson } from "./providers.ts";
+import type { UsageContext } from "./providers.ts";
 import { names, type Named } from "./measure.ts";
 
 export type Entity = { name: string; recommended: boolean; client: boolean };
@@ -59,11 +60,12 @@ function prompt(client: Named & { sector?: string | null }, jobs: EntityJob[]): 
 export async function extractEntities(
   client: Named & { sector?: string | null },
   jobs: EntityJob[],
+  usage?: UsageContext,
 ): Promise<{ out: Map<string, Entities>; error?: string; model?: string }> {
   const out = new Map<string, Entities>();
   const live = jobs.filter((j) => j.answers.some((a) => a && a.trim()));
   if (!live.length) return { out };
-  const res = await callAnalyst(prompt(client, live), 12000);
+  const res = await callAnalyst(prompt(client, live), 12000, usage);
   if (res.error) return { out, error: res.error };
   const parsed = parseJson<{ answers?: { id?: string; brands?: { name?: string; recommended?: boolean }[] }[] }>(
     res.text,

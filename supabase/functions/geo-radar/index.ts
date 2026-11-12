@@ -44,6 +44,8 @@ type Brief = {
 };
 
 type Body = {
+  /** The client, used only to label AI spend (geo_ai_usage). */
+  brand_id?: string | null;
   brand?: string;
   sector?: string | null;
   website?: string | null;
@@ -297,7 +299,7 @@ Deno.serve(async (req: Request) => {
   const compNews = comp.articles;
   const newsError = theme.error || comp.error;
 
-  const out = await callAnalyst(prompt(b, news, compNews), 8000);
+  const out = await callAnalyst(prompt(b, news, compNews), 8000, { fn: "geo-radar", purpose: "radar", brandId: b.brand_id });
   const parsed = out.error ? null : parseJson<{ items?: Record<string, unknown>[] }>(out.text);
   if (!parsed?.items?.length) {
     return json({

@@ -52,6 +52,8 @@ type Candidate = {
 };
 
 type Body = {
+  /** The client, used only to label AI spend (geo_ai_usage). */
+  brand_id?: string | null;
   brand?: string;
   website?: string | null;
   sector?: string | null;
@@ -196,7 +198,7 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, error: "brand and candidates required" });
   }
 
-  const out = await callAnalyst(prompt(body, candidates), 8000);
+  const out = await callAnalyst(prompt(body, candidates), 8000, { fn: "geo-targets", purpose: "titles", brandId: body.brand_id });
   if (out.error) return json({ ok: false, error: "call_failed", detail: out.error });
   const parsed = parseJson<{ titles?: Record<string, unknown>[] }>(out.text);
   if (!parsed?.titles) {

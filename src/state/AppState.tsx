@@ -11,11 +11,12 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { callFn } from "@/lib/callFn";
+import { callFn, setSpendBrand } from "@/lib/callFn";
 import { ClassifySourcesSchema, EngineStatusSchema } from "@/lib/schemas";
 import { gapSources } from "@/lib/sources";
 import { AREAS, CLIENT_AREAS, ENGINES, LEGACY_VIEWS, measuredOnly } from "@/lib/constants";
 import { clientSlug, findClient, recentClients, rememberClient } from "@/lib/clientIdentity";
+import { agoText, checkCost, daysSince, RECENT_CHECK_DAYS } from "@/lib/checkCost";
 import type { AreaId } from "@/lib/constants";
 import { SCORE_COLUMNS, sovFromSamples } from "@/lib/scoring";
 import type { Scorable } from "@/lib/scoring";
@@ -88,11 +89,12 @@ const EMPTY: BrandData = {
 };
 
 export type Mode = "team" | "client";
-export type AnswersFilter = "all" | "unbranded" | "branded";
+export type AnswersFilter = "all" | "unbranded" | "branded" | "missed" | "inaccurate";
 
 type Ctx = {
   ready: boolean;
   userEmail: string;
+  isAdmin: boolean;
   sb: ReturnType<typeof getSupabaseBrowserClient>;
 
   mode: Mode;
@@ -172,13 +174,14 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const [ready, setReady] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  // Account admins see the Admin area (clients, users, AI spend, weights).
+  const [isAdmin, setIsAdmin] = useState(false);
   const [mode, setMode] = useState<Mode>(
     searchParams.get("view") === "client" ? "client" : "team",
   );
   const [viewState, setViewState] = useState<AreaId>("overview");
   const [tabs, setTabs] = useState<Record<string, string>>({});
   const [answersFilter, setAnswersFilter] = useState<AnswersFilter>("all");
-  const [samples, setSamples] = useState(3);
   const [dateRange, setDateRange] = useState<DateRange>({
     mode: "all",
     from: null,
@@ -202,6 +205,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // Keep the latest selected brand id for reload() without re-creating callbacks.
   const brandIdRef = useRef<string | null>(null);
   brandIdRef.current = brand?.id ?? null;
+
+  // AI calls are labelled with the open client so spend is tracked per client.
+  useEffect(() => setSpendBrand(brand?.id ?? null), [brand?.id]);
 
   const toast = useCallback((m: string) => {
     setToastMsg(m);
@@ -248,6 +254,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       prev.map((b) => (b.id === brandIdRef.current ? { ...b, ...patch } : b)),
     );
   }, []);
+
+  // Samples per question are a client setting, used by manual checks and the
+  // automatic monthly check alike (it used to reset to 3 on every reload).
+  const samples = Math.max(1, Math.min(5, brand?.measure_samples || 3));
+  const setSamples = useCallback(
+    async (n: number) => {
+      const b = brand;
+      if (!b) return;
+      const v = Math.max(1, Math.min(5, Math.round(n) || 3));
+      const before = b.measure_samples;
+      patchBrand({ measure_samples: v });
+      const { data: rows, error } = await sb
+        .from("geo_brands")
+        .update({ measure_samples: v })
+        .eq("id", b.id)
+        .select("id");
+      if (error || !rows?.length) {
+        patchBrand({ measure_samples: before });
+        toast("Not saved: " + (error?.message || "your account can't edit this client"));
+      } else toast(`${b.name}: ${v} sample${v === 1 ? "" : "s"} per question`);
+    },
+    [brand, patchBrand, sb, toast],
+  );
 
   const selectBrand = useCallback(
     async (id: string) => {
@@ -434,25 +463,54 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     };
   }, [sb, runId, reload, jobsKey]);
 
+  // Cost of measuring: question × live engine pairs, and how many of them the
+  // current check already has an answer for. Worked out here (not from the
+  // memos further down) so the callbacks below can use it.
+  const measureScope = useCallback(() => {
+    const live = ENGINES.filter((e) => engines[e]);
+    const active = data.prompts.filter((p) => p.active);
+    const answered = new Set(data.responses.map((r) => r.prompt_id + "|" + r.engine));
+    const cells = active.length * live.length;
+    const measured = active.reduce((n, p) => n + live.filter((e) => answered.has(p.id + "|" + e)).length, 0);
+    const busy = jobs.some((j) => j.status === "pending" || j.status === "sent");
+    return { cells, measured, missing: cells - measured, busy };
+  }, [engines, data.prompts, data.responses, jobs]);
+
   const startSnapshot = useCallback(async () => {
     const b = brand;
     if (!b) return;
-    if (
-      !window.confirm(
-        "Run a new monthly check for " +
-          b.name +
-          "? Every active question is put to every live AI engine " +
-          samples +
-          "× with live web search. Results arrive over the next 10–20 minutes. Uses your AI credit.",
-      )
-    )
-      return;
+    const { cells, busy } = measureScope();
+    if (!cells) return toast("No active questions or live engines to measure");
+    if (busy) return toast("Already measuring this client — wait for it to finish, or Stop it first");
+    const run = data.currentRun;
+    const days = run?.method === "v2" ? daysSince(run.created_at) : null;
+    // The automatic check runs on the 1st and skips clients checked in the 7
+    // days before it (geo_monthly_snapshots).
+    const now = new Date();
+    const nextAuto = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const toAuto = Math.ceil((nextAuto.getTime() - now.getTime()) / 86_400_000);
+    const autoNote =
+      toAuto <= 7
+        ? `\n\nThe automatic monthly check runs on ${nextAuto.toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+          })} (in ${toAuto} day${toAuto === 1 ? "" : "s"}) and will skip ${b.name} if you start one now.`
+        : "";
+    const message =
+      days != null && days < RECENT_CHECK_DAYS
+        ? `${b.name} was already checked ${agoText(days)}. A new monthly check starts again from ` +
+          `scratch and replaces it as the current check — ${checkCost(cells, samples)}.\n\n` +
+          `To fill in questions that are missing or failed, use "Measure now" in the top bar ` +
+          `instead: it only measures what's missing.${autoNote}\n\nStart a whole new check anyway?`
+        : `Run a new monthly check for ${b.name}? ${checkCost(cells, samples)}. ` +
+          `Results arrive over the next 10–20 minutes. Uses your AI credit.${autoNote}`;
+    if (!window.confirm(message)) return;
     const { error } = await sb.rpc("geo_start_snapshot", { bid: b.id, p_samples: samples });
     if (error) return toast("Monthly check failed to start: " + error.message);
     toast("Monthly check started — results arrive over the next 10–20 minutes");
     await reload();
     setJobsKey((k) => k + 1);
-  }, [brand, samples, sb, toast, reload]);
+  }, [brand, data.currentRun, measureScope, samples, sb, toast, reload]);
 
   const remeasure = useCallback(async () => {
     const run = data.currentRun;
@@ -462,11 +520,20 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       // Never mix methods inside one check: start a new-method check instead.
       return startSnapshot();
     }
+    const { cells, measured, missing, busy } = measureScope();
+    if (busy) return toast("Already measuring this client — wait for it to finish, or Stop it first");
+    // Re-asking pairs that already have this month's answer is the costliest
+    // way to fill a gap, so say what it re-buys and point to the cheap option.
     if (
       !window.confirm(
-        "Re-measure every active question on every live AI engine, " +
-          samples +
-          " samples each? Results update as they come in (usually 10–20 minutes). Uses your AI credit.",
+        `Re-measure everything for ${brand.name}? This asks every question again, including the ` +
+          `${measured.toLocaleString("en-GB")} already measured in this check — ${checkCost(cells, samples)}.\n\n` +
+          (missing > 0
+            ? `Only ${missing.toLocaleString("en-GB")} ${missing === 1 ? "is" : "are"} missing: "Measure now" ` +
+              `in the top bar measures just ${missing === 1 ? "that one" : "those"}.\n\n`
+            : "") +
+          "Only re-measure everything when something changed that affects every answer " +
+          "(the fact sheet, names or competitors). Continue?",
       )
     )
       return;
@@ -474,7 +541,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     if (error) return toast("Re-measure failed: " + error.message);
     toast(n ? n + " measurements queued" : "Already measuring — nothing new queued");
     setJobsKey((k) => k + 1);
-  }, [brand, data.currentRun, data.prompts, samples, sb, toast, startSnapshot]);
+  }, [brand, data.currentRun, data.prompts, measureScope, samples, sb, toast, startSnapshot]);
 
   const measureNewQuestions = useCallback(async () => {
     const run = data.currentRun;
@@ -698,7 +765,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         data: { session },
       } = await sb.auth.getSession();
       if (cancelled) return;
-      if (session) setUserEmail(session.user.email || "");
+      if (session) {
+        setUserEmail(session.user.email || "");
+        setIsAdmin((session.user.app_metadata as { role?: string } | undefined)?.role === "admin");
+      }
       await loadEngines();
       await loadBrands();
       // Team view opens on All clients unless a link named the client.
@@ -729,6 +799,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const value: Ctx = {
     ready,
     userEmail,
+    isAdmin,
     sb,
     mode,
     view,

@@ -15,6 +15,14 @@ import { r1 } from "@/lib/format";
 import type { DateRange } from "@/lib/types";
 
 /**
+ * Client + strategy versions already auto-summarised in this browser session.
+ * Module-level (not a ref) so returning to the Overview doesn't ask again: a
+ * viewer who can't save the summary (a read-only client login) would otherwise
+ * pay for a fresh AI summary on every visit.
+ */
+const autoSummarised = new Set<string>();
+
+/**
  * The visibility strategy at the top of the Overview: a short AI summary of the
  * strategy and PR profile in Client setup, written automatically and editable
  * by the team. An AI summary is rewritten when Client setup changes; one the
@@ -26,8 +34,6 @@ export function StrategyBanner() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  // Auto-writes at most once per client + strategy version on this screen.
-  const tried = useRef<string>("");
   // The client on screen now, so a reply that lands after a switch isn't shown
   // on the wrong client.
   const current = useRef(brand?.id);
@@ -62,8 +68,9 @@ export function StrategyBanner() {
     if (!brand || !show || editing) return;
     if (state !== "missing" && state !== "stale") return;
     const key = brand.id + "|" + strategySource(brand);
-    if (tried.current === key) return;
-    tried.current = key;
+    // Auto-writes at most once per client + strategy version per session.
+    if (autoSummarised.has(key)) return;
+    autoSummarised.add(key);
     void regenerate();
   }, [brand, show, state, editing, regenerate]);
 

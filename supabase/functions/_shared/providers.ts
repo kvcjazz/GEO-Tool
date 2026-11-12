@@ -159,7 +159,96 @@ export type CallOptions = {
    * OpenAI, Perplexity). Gemini and xAI have no such option and ignore it.
    */
   country?: string | null;
+  /**
+   * Who is spending: when given, every provider request this call makes
+   * (each model id tried, each retry) is logged to geo_ai_usage.
+   */
+  usage?: UsageContext;
 };
+
+/** Labels a call in the AI spend log (geo_ai_usage). */
+export type UsageContext = {
+  /** Edge function name, e.g. "geo-measure". */
+  fn: string;
+  /** What the call is for, e.g. "answer", "grade", "entities". */
+  purpose: string;
+  /** The client the call is for, when there is one. */
+  brandId?: string | null;
+};
+
+/** Tokens and searches one provider request used, as the provider reported them. */
+export type Usage = {
+  input: number;
+  /** Output tokens including thinking/reasoning tokens (billed as output). */
+  output: number;
+  /** Web searches the provider billed for this request. */
+  searches: number;
+  /** Cost in USD when the provider reports it (Perplexity does). */
+  costUsd?: number | null;
+};
+
+const ZERO: Usage = { input: 0, output: 0, searches: 0 };
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+function addUsage(a: Usage, b: Usage): Usage {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    searches: a.searches + b.searches,
+    costUsd: a.costUsd != null || b.costUsd != null ? num(a.costUsd) + num(b.costUsd) : null,
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Writes one row to geo_ai_usage. Best effort: logging must never fail or
+ * noticeably slow the call it describes.
+ */
+async function logUsage(
+  ctx: UsageContext | undefined,
+  provider: ProviderId,
+  model: string,
+  u: Usage | undefined,
+  ok: boolean,
+  error: string,
+): Promise<void> {
+  if (!ctx) return;
+  const url = Deno.env.get("SUPABASE_URL") || "";
+  const sr = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!url || !sr) return;
+  const usage = u || ZERO;
+  const row = {
+    brand_id: ctx.brandId && UUID_RE.test(ctx.brandId) ? ctx.brandId : null,
+    fn: ctx.fn.slice(0, 60),
+    purpose: ctx.purpose.slice(0, 60),
+    provider,
+    model: model.slice(0, 120),
+    ok,
+    input_tokens: Math.round(usage.input),
+    output_tokens: Math.round(usage.output),
+    searches: Math.round(usage.searches),
+    reported_cost_usd: usage.costUsd ?? null,
+    error: ok ? null : (error || "").slice(0, 300),
+  };
+  try {
+    const r = await fetch(url + "/rest/v1/geo_ai_usage", {
+      method: "POST",
+      headers: {
+        apikey: sr,
+        authorization: "Bearer " + sr,
+        "content-type": "application/json",
+        prefer: "return=minimal",
+      },
+      body: JSON.stringify(row),
+      signal: AbortSignal.timeout(4000),
+    });
+    await r.body?.cancel();
+  } catch {
+    /* spend logging is best effort */
+  }
+}
 
 /** A valid upper-case ISO 3166-1 alpha-2 code, or null. */
 export function countryCode(c: unknown): string | null {
@@ -173,6 +262,8 @@ type Attempt = {
   text: string;
   citations: string[];
   message: string;
+  /** What the request used, when the provider said (also on some failures). */
+  usage?: Usage;
 };
 
 const resolvedModel = new Map<ProviderId, string>();
@@ -283,6 +374,22 @@ const fail = (status: number, message: string): Attempt => ({
   message,
 });
 
+/** Anthropic Messages `usage` → Usage (cache tokens count as input). */
+function anthropicUsage(u: unknown): Usage {
+  const x = (u || {}) as {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    server_tool_use?: { web_search_requests?: number };
+  };
+  return {
+    input: num(x.input_tokens) + num(x.cache_creation_input_tokens) + num(x.cache_read_input_tokens),
+    output: num(x.output_tokens),
+    searches: num(x.server_tool_use?.web_search_requests),
+  };
+}
+
 type AnthropicBlock = {
   type?: string;
   text?: string;
@@ -314,6 +421,8 @@ async function anthropicSearch(
   ];
   const blocks: AnthropicBlock[] = [];
   let lastStop: string | undefined;
+  // Every turn is billed, so usage is summed across pause_turn resumptions.
+  let usage: Usage = ZERO;
   for (let turn = 0; turn < 3; turn++) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -333,8 +442,10 @@ async function anthropicSearch(
     const j = (await readJson(r)) as {
       content?: AnthropicBlock[];
       stop_reason?: string;
+      usage?: unknown;
     };
-    if (!r.ok) return fail(r.status, errText(r.status, j));
+    if (!r.ok) return { ...fail(r.status, errText(r.status, j)), usage };
+    usage = addUsage(usage, anthropicUsage(j.usage));
     blocks.push(...(j.content || []));
     lastStop = j.stop_reason;
     if (j.stop_reason !== "pause_turn") break;
@@ -344,12 +455,12 @@ async function anthropicSearch(
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
     .join("");
-  if (!text.trim()) return emptyClaude(lastStop);
+  if (!text.trim()) return { ...emptyClaude(lastStop), usage };
   // Only the sources Claude cites in its answer — not every page it read.
   const citations = blocks
     .flatMap((b) => (b.type === "text" ? (b.citations || []).map((c) => c.url || "") : []))
     .filter(Boolean);
-  return { ok: true, status: 200, text, citations, message: "" };
+  return { ok: true, status: 200, text, citations, message: "", usage };
 }
 
 /**
@@ -384,8 +495,15 @@ async function responsesSearch(
       }[];
     }[];
     citations?: (string | { url?: string })[];
+    usage?: { input_tokens?: number; output_tokens?: number };
   };
   if (!r.ok) return fail(r.status, errText(r.status, j));
+  // Each web_search_call output item is one billed search.
+  const usage: Usage = {
+    input: num(j.usage?.input_tokens),
+    output: num(j.usage?.output_tokens),
+    searches: (j.output || []).filter((o) => o.type === "web_search_call").length,
+  };
   const parts = (j.output || [])
     .filter((o) => o.type === "message")
     .flatMap((o) => o.content || [])
@@ -399,7 +517,7 @@ async function responsesSearch(
     ),
     ...(j.citations || []).map((c) => (typeof c === "string" ? c : c.url || "")),
   ].filter(Boolean);
-  return { ok: true, status: r.status, text, citations, message: "" };
+  return { ok: true, status: r.status, text, citations, message: "", usage };
 }
 
 /**
@@ -440,14 +558,16 @@ async function attempt(
     const j = (await readJson(r)) as {
       content?: { type?: string; text?: string }[];
       stop_reason?: string;
+      usage?: unknown;
     };
     if (!r.ok) return fail(r.status, errText(r.status, j));
+    const usage = anthropicUsage(j.usage);
     const text = (j.content || [])
       .filter((c) => !c.type || c.type === "text")
       .map((c) => c.text || "")
       .join("");
-    if (!text.trim()) return emptyClaude(j.stop_reason);
-    return { ok: true, status: r.status, text, citations: [], message: "" };
+    if (!text.trim()) return { ...emptyClaude(j.stop_reason), usage };
+    return { ok: true, status: r.status, text, citations: [], message: "", usage };
   }
 
   if (webSearch && provider === "openai") {
@@ -484,15 +604,28 @@ async function attempt(
       choices?: { message?: { content?: string } }[];
       citations?: string[];
       search_results?: { url?: string }[];
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        num_search_queries?: number;
+        cost?: { total_cost?: number };
+      };
     };
     if (!r.ok) return fail(r.status, errText(r.status, j));
+    const usage: Usage = {
+      input: num(j.usage?.prompt_tokens),
+      output: num(j.usage?.completion_tokens),
+      // Perplexity searches (and charges a request fee) on every call.
+      searches: provider === "perplexity" ? num(j.usage?.num_search_queries) || 1 : 0,
+      costUsd: typeof j.usage?.cost?.total_cost === "number" ? j.usage.cost.total_cost : null,
+    };
     const text = j.choices?.[0]?.message?.content || "";
     // Perplexity returns real sources; newer responses use search_results.
     const citations = [
       ...(j.citations || []),
       ...(j.search_results || []).map((s) => s.url || ""),
     ].filter(Boolean);
-    return { ok: true, status: r.status, text, citations, message: "" };
+    return { ok: true, status: r.status, text, citations, message: "", usage };
   }
 
   // Gemini
@@ -513,10 +646,26 @@ async function attempt(
   const j = (await readJson(r)) as {
     candidates?: {
       content?: { parts?: { text?: string; thought?: boolean }[] };
-      groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[] };
+      groundingMetadata?: {
+        groundingChunks?: { web?: { uri?: string; title?: string } }[];
+        webSearchQueries?: string[];
+      };
     }[];
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      thoughtsTokenCount?: number;
+      toolUsePromptTokenCount?: number;
+    };
   };
   if (!r.ok) return fail(r.status, errText(r.status, j));
+  const um = j.usageMetadata;
+  const usage: Usage = {
+    input: num(um?.promptTokenCount) + num(um?.toolUsePromptTokenCount),
+    // Thinking tokens are billed as output.
+    output: num(um?.candidatesTokenCount) + num(um?.thoughtsTokenCount),
+    searches: (j.candidates?.[0]?.groundingMetadata?.webSearchQueries || []).length,
+  };
   // Thinking models interleave reasoning parts — those must not reach the
   // JSON parser or it locks onto braces inside the reasoning.
   const text = (j.candidates?.[0]?.content?.parts || [])
@@ -526,7 +675,7 @@ async function attempt(
   const citations = (j.candidates?.[0]?.groundingMetadata?.groundingChunks || [])
     .map((c) => geminiSource(c.web || {}))
     .filter(Boolean);
-  return { ok: true, status: r.status, text, citations, message: "" };
+  return { ok: true, status: r.status, text, citations, message: "", usage };
 }
 
 /**
@@ -560,6 +709,9 @@ export async function callModel(
           ? fail(TIMED_OUT, `timed out after ${SEARCH_TIMEOUT_MS / 1000}s`)
           : fail(0, String(e));
       }
+      // Every request is logged, failed ones too: a timed-out search may still
+      // have been billed, and spend-limit failures show up in the spend panel.
+      await logUsage(opts.usage, provider, model, a.usage, a.ok, a.message);
       if (a.ok) {
         resolvedModel.set(provider, model);
         return { text: a.text, citations: a.citations, model, error: "", searched };
@@ -587,13 +739,13 @@ export async function callModel(
         }
         // Auth or bad request: another model id will not help. A rejected
         // search request still gets a plain answer, flagged as unsearched.
-        if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError);
+        if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError, opts.usage);
         return { text: "", citations: [], model, error: lastError, searched };
       }
       if (tries === 0) await new Promise((res) => setTimeout(res, 1200));
     }
   }
-  if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError);
+  if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError, opts.usage);
   return {
     text: "",
     citations: [],
@@ -609,8 +761,9 @@ async function searchFallback(
   prompt: string,
   maxTokens: number,
   searchError: string,
+  usage?: UsageContext,
 ): Promise<ModelResult> {
-  const plain = await callModel(provider, key, prompt, maxTokens);
+  const plain = await callModel(provider, key, prompt, maxTokens, { usage });
   return { ...plain, searched: false, searchError: searchError || "search unavailable" };
 }
 
@@ -629,12 +782,13 @@ export const ANALYST_ORDER: ProviderId[] = ["anthropic", "openai", "gemini"];
 export async function callAnalyst(
   prompt: string,
   maxTokens = 4000,
+  usage?: UsageContext,
 ): Promise<ModelResult & { provider?: ProviderId; fellBackFrom?: string }> {
   const errors: string[] = [];
   for (const provider of ANALYST_ORDER) {
     const key = envKey(provider);
     if (!key) continue;
-    const out = await callModel(provider, key, prompt, maxTokens);
+    const out = await callModel(provider, key, prompt, maxTokens, { usage });
     if (!out.error && out.text.trim()) {
       return { ...out, provider, fellBackFrom: errors.length ? errors.join(" | ") : undefined };
     }

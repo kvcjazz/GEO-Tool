@@ -158,12 +158,17 @@ export const AREAS: Area[] = [
     client: false,
     question: "What do the AI engines actually say when buyers ask our questions?",
     todo: "Read the answers behind the score, see which sites the engines trust, and correct any rating that looks wrong.",
-    action: { kind: "remeasure", label: "Re-measure now" },
+    action: { kind: "remeasure", label: "Re-measure everything…" },
     tabs: [
       {
         id: "answers",
         label: "Answers",
         hint: "Every question we track, and which engines named this client when asked it.",
+      },
+      {
+        id: "competitors",
+        label: "Competitors",
+        hint: "Every brand the engines name instead of this client, and the buyer questions each one wins.",
       },
       {
         id: "sources",
@@ -191,7 +196,7 @@ export const AREAS: Area[] = [
       {
         id: "ideas",
         label: "Ideas inbox",
-        hint: "New suggestions from the Radar briefing. Add the good ones to the plan — rating them teaches the Radar.",
+        hint: "New PR and content ideas drawn from the latest check and the news. Add the good ones to the plan; what you accept and dismiss shapes the next ideas.",
       },
       {
         id: "titles",

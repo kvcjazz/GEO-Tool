@@ -105,7 +105,11 @@ async function canRepair(req: Request, bid: string): Promise<boolean> {
 }
 
 /** Publication, headline and date for each link (page → headline suffix → AI → site name). */
-async function resolve(urls: string[], headlines: Record<string, string>): Promise<Item[]> {
+async function resolve(
+  urls: string[],
+  headlines: Record<string, string>,
+  brandId?: string | null,
+): Promise<Item[]> {
   const items: Item[] = new Array(urls.length);
   let next = 0;
   await Promise.all(
@@ -146,6 +150,7 @@ async function resolve(urls: string[], headlines: Record<string, string>): Promi
         unknown.join("\n") +
         '\n\nReturn ONLY a JSON object: {"sites":[{"domain":"…","name":"…"}]}',
       2000,
+      { fn: "geo-coverage-meta", purpose: "publication-names", brandId },
     );
     const parsed = out.error ? null : parseJson<{ sites?: { domain?: string; name?: string }[] }>(out.text);
     const names = new Map(
@@ -185,6 +190,7 @@ async function repair(bid: string): Promise<Response> {
     const found = await resolve(
       chunk.map((p) => p.url!),
       Object.fromEntries(chunk.map((p) => [p.url!, p.headline || p.outlet])),
+      bid,
     );
     const byUrl = new Map(found.map((f) => [f.url, f]));
     for (const p of chunk) {
@@ -224,5 +230,5 @@ Deno.serve(async (req: Request) => {
   const urls = [...new Set((body.urls || []).map((u) => String(u || "").trim()).filter((u) => /^https?:\/\//i.test(u)))]
     .slice(0, MAX);
   if (!urls.length) return json({ ok: true, items: [] });
-  return json({ ok: true, items: await resolve(urls, body.headlines || {}) });
+  return json({ ok: true, items: await resolve(urls, body.headlines || {}, body.brand_id) });
 });

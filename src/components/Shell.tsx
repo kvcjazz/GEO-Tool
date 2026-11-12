@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { AREAS, ENGINES } from "@/lib/constants";
+import { nextAutoCheck } from "@/lib/checkCost";
 import type { Area } from "@/lib/constants";
 import { setupSteps } from "@/lib/setup";
 import DashboardView from "@/views/DashboardView";
 import CaptureView from "@/views/CaptureView";
+import CompetitorsView from "@/views/CompetitorsView";
 import BacklogView from "@/views/BacklogView";
 import PlanningView from "@/views/PlanningView";
 import SourcesView from "@/views/SourcesView";
@@ -26,7 +28,15 @@ function AreaBody({ area, tab }: { area: string; tab: string }) {
     case "clients":
       return <ClientsView />;
     case "answers":
-      return tab === "sources" ? <SourcesView /> : tab === "mentions" ? <ListeningView /> : <CaptureView />;
+      return tab === "sources" ? (
+        <SourcesView />
+      ) : tab === "mentions" ? (
+        <ListeningView />
+      ) : tab === "competitors" ? (
+        <CompetitorsView />
+      ) : (
+        <CaptureView />
+      );
     case "plan":
       return tab === "actions" ? <BacklogView /> : tab === "titles" ? <TargetsView /> : <PlanningView />;
     case "coverage":
@@ -54,6 +64,7 @@ export default function Shell() {
   const {
     ready,
     userEmail,
+    isAdmin,
     mode,
     view,
     tab,
@@ -95,7 +106,8 @@ export default function Shell() {
   const score =
     brand && data.responses.length ? r1(computeAll(brand, data.responses).blended.geo) : null;
   const area = AREAS.find((a) => a.id === view) || AREAS[0];
-  const visible = AREAS.filter((a) => !client || a.client);
+  // Admin is for account admins only; client view shows client areas only.
+  const visible = AREAS.filter((a) => (!client || a.client) && (a.id !== "admin" || isAdmin));
 
   const live = ENGINES.filter((e) => engines[e]);
   const offline = ENGINES.filter((e) => !engines[e]);
@@ -235,6 +247,23 @@ export default function Shell() {
             ) : (
               <span className="ctx-run muted">No monthly check yet</span>
             )}
+            {!client && brand && (() => {
+              const auto = nextAutoCheck(run?.method === "v2" ? run.created_at : null);
+              const when = auto.date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+              return (
+                <span
+                  className="chip"
+                  title={
+                    auto.skips
+                      ? `The automatic monthly check on ${when} skips ${brand.name}: it was checked in the 7 days before.`
+                      : `Every active question is measured automatically on ${when} (${samples} time${samples === 1 ? "" : "s"} each). ` +
+                        "No need to run a check by hand unless something has changed."
+                  }
+                >
+                  {auto.skips ? `Auto check ${when}: skipped` : `Next auto check ${when}`}
+                </span>
+              );
+            })()}
             {inFlight > 0 && (
               <span className="chip chip-blue">
                 Measuring {jobs.length - inFlight} of {jobs.length}
@@ -308,7 +337,7 @@ export default function Shell() {
             <div className="card">Loading…</div>
           ) : !brand ? (
             <div className="card">
-              No clients yet. Create one in <b>Admin → Add a client</b> (Team view).
+              No clients yet. {isAdmin ? <>Create one in <b>Admin → Add a client</b>.</> : "Ask an account admin to add one."}
             </div>
           ) : (
             <>
@@ -348,7 +377,11 @@ export default function Shell() {
                   {tabHint && <p className="tab-hint">{tabHint}</p>}
                 </>
               )}
-              <AreaBody area={view} tab={tab} />
+              {view === "admin" && !isAdmin ? (
+                <div className="card muted">Admin is for account admins. Ask one if you need a client added or a setting changed.</div>
+              ) : (
+                <AreaBody area={view} tab={tab} />
+              )}
             </>
           )}
         </div>

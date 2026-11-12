@@ -97,7 +97,7 @@ function templateQuestions(b: Brand): string[] {
   return ps.slice(0, 6);
 }
 
-async function makeQuestions(b: Brand): Promise<string[]> {
+async function makeQuestions(b: Brand, bid: string): Promise<string[]> {
   const prompt = 'A company called "' + b.name + '" operates in this space. Sector: ' +
     (b.sector || "") + ". Themes: " + (b.themes || "") + ". Positioning: " +
     (b.positioning || "") + ". Audience: " + (b.pr_persona || b.audience || "") +
@@ -107,7 +107,7 @@ async function makeQuestions(b: Brand): Promise<string[]> {
     "this exact space and market. Be specific to the real category (name the precise " +
     'field or sub-sector), NOT generic. Do NOT mention "' + b.name + '" in any question. ' +
     "Return ONLY a JSON array of 6 question strings.";
-  const out = await callAnalyst(prompt, 800);
+  const out = await callAnalyst(prompt, 800, { fn: "geo-listen", purpose: "listen-questions", brandId: bid });
   const arr = parseStringArray(out.text);
   if (arr && arr.length >= 3) return arr.slice(0, 6);
   return templateQuestions(b);
@@ -155,7 +155,7 @@ Deno.serve(async (req: Request) => {
     const engines = liveEngines();
     if (!engines.length) return json({ ok: false, error: "no_keys" });
 
-    const questions = await makeQuestions(brand);
+    const questions = await makeQuestions(brand, bid);
     const who: Named = { name: brand.name, aliases: brand.aliases || [] };
 
     // Every engine × question side by side: searched answers are slow.
@@ -168,6 +168,7 @@ Deno.serve(async (req: Request) => {
         const out = await callModel(provider, key, q, 3000, {
           webSearch: true,
           country: brand.market_country,
+          usage: { fn: "geo-listen", purpose: "listen-answer", brandId: bid },
         });
         if (out.error) return { engine, q, error: out.error, rows: [] as Mention[] };
         const rows: Mention[] = [];

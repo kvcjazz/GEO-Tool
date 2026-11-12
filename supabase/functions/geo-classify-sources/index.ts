@@ -10,6 +10,8 @@ import { signedIn } from "../_shared/auth.ts";
 const KINDS = ["competitor", "media", "directory", "review", "community", "academic", "other"];
 
 type Body = {
+  /** The client, used only to label AI spend (geo_ai_usage). */
+  brand_id?: string | null;
   brand?: string;
   website?: string | null;
   sector?: string | null;
@@ -56,7 +58,11 @@ Deno.serve(async (req: Request) => {
   if (!body.brand || !domains.length) {
     return json({ ok: false, error: "brand and domains required" });
   }
-  const out = await callAnalyst(prompt(body, domains), 4000);
+  const out = await callAnalyst(prompt(body, domains), 4000, {
+    fn: "geo-classify-sources",
+    purpose: "classify-sources",
+    brandId: body.brand_id,
+  });
   if (out.error) return json({ ok: false, error: "call_failed", detail: out.error });
   const parsed = parseJson<{ sites?: { domain?: string; kind?: string; label?: string }[] }>(
     out.text,

@@ -13,6 +13,7 @@ import {
 import { computeAll } from "@/lib/scoring";
 import { r1 } from "@/lib/format";
 import { namesBrand } from "@/lib/questions";
+import { needsAttention } from "@/lib/changes";
 import { seoOriginText } from "@/lib/searchDemand";
 import { SeoChip } from "@/components/ui";
 import type { Prompt, Response } from "@/lib/types";
@@ -49,9 +50,51 @@ type Group = {
   branded: boolean;
 };
 
+type OverrideValue = string | number | boolean | null;
+type Override = { by: string; at: string; original: Record<string, OverrideValue> };
+
+function overrideOf(r: Response | undefined): Override | null {
+  const o = r?.override as Override | null | undefined;
+  return o && typeof o === "object" && o.original ? o : null;
+}
+
+const FIELD_LABEL: Record<string, string> = {
+  mentioned: "named",
+  prominence: "prominence",
+  sentiment: "sentiment",
+  accuracy: "accuracy",
+  cited: "own site cited",
+  competitor_mentions: "competitors",
+};
+
+function overrideTitle(r: Response): string {
+  const o = overrideOf(r)!;
+  const when = new Date(o.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const show = (v: OverrideValue) => (v === true ? "Yes" : v === false ? "No" : v == null || v === "" ? "—" : String(v));
+  const changes = Object.entries(o.original)
+    .map(([k, was]) => `${FIELD_LABEL[k] || k} ${show(was)} → ${show(r[k as keyof Response] as OverrideValue)}`)
+    .join(", ");
+  return `Changed by ${o.by} on ${when}: ${changes}`;
+}
+
 export default function CaptureView() {
-  const { brand, data, mode, sb, toast, patchResponse, jobs, answersFilter, setAnswersFilter } =
-    useAppState();
+  const {
+    brand,
+    data,
+    mode,
+    sb,
+    toast,
+    patchResponse,
+    jobs,
+    answersFilter,
+    setAnswersFilter,
+    userEmail,
+    unmeasured,
+    missingMeasurements,
+    measureNewQuestions,
+    liveEngineCount,
+    samples,
+  } = useAppState();
   const [openQ, setOpenQ] = useState<Set<string>>(new Set());
   const [openR, setOpenR] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState(false);
@@ -82,13 +125,26 @@ export default function CaptureView() {
   const ro = mode === "client";
   const canEdit = !ro && editing;
 
-  const shown = groups.filter(
-    (g) => answersFilter === "all" || (answersFilter === "branded") === g.branded,
-  );
+  // "Others named, not the client" and "gets facts wrong" come from the same
+  // logic as the Overview's Needs attention card.
+  const attention = needsAttention(brand, data.responses, data.prompts);
+  const missedIds = new Set(attention.missedToOthers.map((q) => q.id));
+  const wrongIds = new Set(attention.errors.map((r) => r.prompt_id));
+  const matches = (g: Group, f: AnswersFilter) =>
+    f === "all"
+      ? true
+      : f === "missed"
+        ? missedIds.has(g.prompt.id)
+        : f === "inaccurate"
+          ? wrongIds.has(g.prompt.id)
+          : (f === "branded") === g.branded;
+  const shown = groups.filter((g) => matches(g, answersFilter));
   const chips: [AnswersFilter, string][] = [
     ["all", `All questions (${groups.length})`],
     ["unbranded", `Don't mention ${brand.name} (${groups.filter((g) => !g.branded).length})`],
     ["branded", `Ask about ${brand.name} by name (${groups.filter((g) => g.branded).length})`],
+    ["missed", `Others named, not ${brand.name} (${groups.filter((g) => matches(g, "missed")).length})`],
+    ["inaccurate", `Gets facts wrong (${groups.filter((g) => matches(g, "inaccurate")).length})`],
   ];
 
   const inFlight = jobs.filter((j) => j.status === "pending" || j.status === "sent").length;
@@ -124,11 +180,23 @@ export default function CaptureView() {
     if (field === "mentioned") v = raw === "true";
     else if (field === "competitor_mentions") v = +raw;
     else if (raw === "") v = null;
-    patchResponse(id, { [field]: v } as Partial<Response>);
-    const { error } = await sb
+    const row = data.responses.find((r) => r.id === id);
+    // Keep what the measurement said the first time each rating is changed,
+    // plus who changed it and when, so overrides stay visible and reversible.
+    const prev = overrideOf(row);
+    const original = { ...(prev?.original || {}) };
+    if (row && !(field in original)) original[field] = row[field] as OverrideValue;
+    const override: Override = { by: userEmail || "team", at: new Date().toISOString(), original };
+    const change = { [field]: v } as Partial<Response>;
+    patchResponse(id, { ...change, override: override as unknown as Response["override"] });
+    let { error } = await sb
       .from("geo_responses")
-      .update({ [field]: v } as Partial<Response>)
+      .update({ ...change, override: override as unknown as Response["override"] })
       .eq("id", id);
+    // Before the override column exists, save the rating alone.
+    if (error && /override/.test(error.message)) {
+      ({ error } = await sb.from("geo_responses").update(change).eq("id", id));
+    }
     if (error) {
       toast("Save failed");
       return;
@@ -136,6 +204,16 @@ export default function CaptureView() {
     const updated = data.responses.map((r) => (r.id === id ? { ...r, [field]: v } : r));
     const { blended } = computeAll(brand!, updated as Response[]);
     toast("Saved · GEO score now " + r1(blended.geo));
+  }
+
+  async function restoreRating(r: Response) {
+    const o = overrideOf(r);
+    if (!o) return;
+    const back = { ...o.original, override: null } as Partial<Response>;
+    const { error } = await sb.from("geo_responses").update(back).eq("id", r.id);
+    if (error) return toast("Not restored: " + error.message);
+    patchResponse(r.id, back);
+    toast("AI rating restored");
   }
 
   async function saveEvidence(id: string) {
@@ -212,7 +290,14 @@ export default function CaptureView() {
                       {open ? "▾" : "▸"}
                     </button>
                   </td>
-                  <td>{r.engine}</td>
+                  <td>
+                    {r.engine}
+                    {overrideOf(r) && (
+                      <span className="tag t-na" style={{ marginLeft: 6 }} title={overrideTitle(r)}>
+                        ✎ edited
+                      </span>
+                    )}
+                  </td>
                   <td>
                     {canEdit ? (
                       <select
@@ -264,6 +349,19 @@ export default function CaptureView() {
                           ` · named in ${Math.round(r.mention_rate * 100)}% of samples`}
                         {r.confidence && ` · confidence ${r.confidence}`}
                       </div>
+                      {overrideOf(r) && (
+                        <div className="legend-note" style={{ margin: "0 0 6px" }}>
+                          ✎ {overrideTitle(r)}
+                          {!ro && (
+                            <>
+                              {" "}
+                              <button type="button" className="linkbtn" style={{ padding: 0 }} onClick={() => restoreRating(r)}>
+                                Restore AI rating
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
                       <b>Evidence</b>
                       <div className="evidence" style={{ margin: "6px 0" }}>
                         {r.evidence || "(The answer didn't name the client.)"}
@@ -473,16 +571,42 @@ export default function CaptureView() {
           <span className="muted">No questions in this filter.</span>
         ) : (
           <span>
-            No answers yet. Use <b>Re-measure now</b> above (or <b>Run monthly check</b> on
-            Overview) to ask every live engine the tracked questions.
+            No answers yet. Use <b>Run monthly check</b> on the Overview to ask every live engine
+            the tracked questions.
           </span>
         )}
       </div>
+      {!ro && unmeasured.length > 0 && !jobs.some((j) => j.status === "pending" || j.status === "sent") && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <h3>Not fully measured in this check ({unmeasured.length})</h3>
+          <ul style={{ margin: "4px 0 8px", paddingLeft: 18, fontSize: 13 }}>
+            {unmeasured.slice(0, 8).map((p) => (
+              <li key={p.id}>{p.text}</li>
+            ))}
+            {unmeasured.length > 8 && <li className="muted">and {unmeasured.length - 8} more</li>}
+          </ul>
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Measure what's missing: ${missingMeasurements} measurement${missingMeasurements === 1 ? "" : "s"} ` +
+                    `(${samples} samples each, ${liveEngineCount} live engines)? Uses AI credit; you can stop it at any time.`,
+                )
+              )
+                void measureNewQuestions();
+            }}
+          >
+            Measure what&#39;s missing
+          </button>
+        </div>
+      )}
       {groups.length > 0 && (
         <p className="legend-note">
           “Read answers” shows each engine&#39;s answer, the sources it cited and how it was
           rated. Turn on <b>Review / override ratings</b> to correct a rating — the score
-          updates straight away.
+          updates straight away, and the change is marked “✎ edited” with who made it.
         </p>
       )}
     </>
