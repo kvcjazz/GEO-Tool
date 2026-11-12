@@ -1650,38 +1650,45 @@ export default function SettingsView({ section }: { section: "setup" | "admin" }
         <div className="card stack" style={{ gridColumn: "1/-1" }}>
           <h3>AI engines &amp; measurement</h3>
           <div className="legend-note">
-            Live engines are queried automatically; the others switch on the moment their
-            API key is added. Every auto-run samples each prompt several times and records
-            a <b>confidence</b> rating. A <b>monthly snapshot</b> runs automatically on the
-            1st.
+            Every question is put to each live engine with web search, several times over, and
+            the answers are compared to give a <b>confidence</b> rating. A monthly check runs
+            automatically on the 1st for every active client (skipped if the client was checked
+            in the previous 7 days).
           </div>
           <div className="flex" style={{ marginTop: 8 }}>
             {ENGINES.map((en) => {
               const live = engines[en];
               return (
                 <span key={en} className={`tag ${live ? "t-yes" : "t-na"}`}>
-                  {en} {live ? "● live" : "○ needs key"}
+                  {en} {live ? "● live" : "○ not connected"}
                 </span>
               );
             })}
           </div>
-          <div className="wrow" style={{ marginTop: 10, maxWidth: 340 }}>
-            <label>Samples per question</label>
-            <input
-              type="number"
-              min={1}
-              max={5}
+          <div className="wrow" style={{ marginTop: 10, maxWidth: 420 }}>
+            <label htmlFor="samples-per-question">Times each question is asked — {brand.name}</label>
+            <select
+              id="samples-per-question"
               value={samples}
-              onChange={(e) =>
-                setSamples(Math.max(1, Math.min(5, +e.target.value || 3)))
-              }
-            />
+              onChange={(e) => setSamples(+e.target.value)}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                  {n === 1 ? " (cheapest, no confidence rating)" : n === 3 ? " (recommended)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="legend-note">
-            To add an engine, put its key in Supabase → Project Settings → Edge Functions
-            secrets: <b>OPENAI_API_KEY</b>, <b>GEMINI_API_KEY</b>,{" "}
-            <b>PERPLEXITY_API_KEY</b>, <b>XAI_API_KEY</b> (Grok). An engine without a
-            key is left out of the score rather than counted as zero.
+            Saved for this client and used by the automatic monthly check too. Each extra time
+            adds one web-searched answer per question per engine, so 3 costs about three times
+            as much as 1.
+          </div>
+          <div className="legend-note">
+            An engine that isn&#39;t connected is left out of the score rather than counted as
+            zero. Connecting one needs its API key adding by whoever manages the Supabase
+            project.
             <br />
             <b>Microsoft Copilot isn&#39;t measured:</b> it has no public API. It runs on
             OpenAI models with Bing search, so ChatGPT is the closest guide to it.

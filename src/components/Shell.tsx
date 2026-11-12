@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAppState } from "@/state/AppState";
 import { AREAS, ENGINES } from "@/lib/constants";
+import { nextAutoCheck } from "@/lib/checkCost";
 import type { Area } from "@/lib/constants";
 import { setupSteps } from "@/lib/setup";
 import DashboardView from "@/views/DashboardView";
@@ -235,6 +236,23 @@ export default function Shell() {
             ) : (
               <span className="ctx-run muted">No monthly check yet</span>
             )}
+            {!client && brand && (() => {
+              const auto = nextAutoCheck(run?.method === "v2" ? run.created_at : null);
+              const when = auto.date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+              return (
+                <span
+                  className="chip"
+                  title={
+                    auto.skips
+                      ? `The automatic monthly check on ${when} skips ${brand.name}: it was checked in the 7 days before.`
+                      : `Every active question is measured automatically on ${when} (${samples} time${samples === 1 ? "" : "s"} each). ` +
+                        "No need to run a check by hand unless something has changed."
+                  }
+                >
+                  {auto.skips ? `Auto check ${when}: skipped` : `Next auto check ${when}`}
+                </span>
+              );
+            })()}
             {inFlight > 0 && (
               <span className="chip chip-blue">
                 Measuring {jobs.length - inFlight} of {jobs.length}

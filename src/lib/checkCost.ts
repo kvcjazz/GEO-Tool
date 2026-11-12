@@ -32,3 +32,18 @@ export function checkCost(cells: number, samples: number): string {
 export function agoText(days: number): string {
   return days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
 }
+
+/**
+ * The next automatic monthly check (06:00 UTC on the 1st) and whether it will
+ * skip this client because a check started in the 7 days before it
+ * (geo_monthly_snapshots).
+ */
+export function nextAutoCheck(
+  lastCheckCreated: string | null | undefined,
+  now = new Date(),
+): { date: Date; skips: boolean } {
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 6));
+  const last = lastCheckCreated ? new Date(lastCheckCreated).getTime() : NaN;
+  const skips = Number.isFinite(last) && date.getTime() - last < 7 * 86_400_000;
+  return { date, skips };
+}

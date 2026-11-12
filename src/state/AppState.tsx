@@ -179,7 +179,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [viewState, setViewState] = useState<AreaId>("overview");
   const [tabs, setTabs] = useState<Record<string, string>>({});
   const [answersFilter, setAnswersFilter] = useState<AnswersFilter>("all");
-  const [samples, setSamples] = useState(3);
   const [dateRange, setDateRange] = useState<DateRange>({
     mode: "all",
     from: null,
@@ -252,6 +251,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       prev.map((b) => (b.id === brandIdRef.current ? { ...b, ...patch } : b)),
     );
   }, []);
+
+  // Samples per question are a client setting, used by manual checks and the
+  // automatic monthly check alike (it used to reset to 3 on every reload).
+  const samples = Math.max(1, Math.min(5, brand?.measure_samples || 3));
+  const setSamples = useCallback(
+    async (n: number) => {
+      const b = brand;
+      if (!b) return;
+      const v = Math.max(1, Math.min(5, Math.round(n) || 3));
+      const before = b.measure_samples;
+      patchBrand({ measure_samples: v });
+      const { data: rows, error } = await sb
+        .from("geo_brands")
+        .update({ measure_samples: v })
+        .eq("id", b.id)
+        .select("id");
+      if (error || !rows?.length) {
+        patchBrand({ measure_samples: before });
+        toast("Not saved: " + (error?.message || "your account can't edit this client"));
+      } else toast(`${b.name}: ${v} sample${v === 1 ? "" : "s"} per question`);
+    },
+    [brand, patchBrand, sb, toast],
+  );
 
   const selectBrand = useCallback(
     async (id: string) => {

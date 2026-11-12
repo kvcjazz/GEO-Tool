@@ -873,6 +873,7 @@ export type Database = {
       }
       geo_brands: {
         Row: {
+          measure_samples: number
           aliases: string[]
           archived: boolean
           audience: string | null
@@ -901,6 +902,7 @@ export type Database = {
           website: string | null
         }
         Insert: {
+          measure_samples?: number
           aliases?: string[]
           archived?: boolean
           audience?: string | null
@@ -929,6 +931,7 @@ export type Database = {
           website?: string | null
         }
         Update: {
+          measure_samples?: number
           aliases?: string[]
           archived?: boolean
           audience?: string | null
@@ -1230,6 +1233,7 @@ export type Database = {
       }
       geo_opportunities: {
         Row: {
+          due_date: string | null
           ai_guidance: string | null
           brand_id: string
           effort: number
@@ -1244,6 +1248,7 @@ export type Database = {
           title: string
         }
         Insert: {
+          due_date?: string | null
           ai_guidance?: string | null
           brand_id: string
           effort?: number
@@ -1258,6 +1263,7 @@ export type Database = {
           title: string
         }
         Update: {
+          due_date?: string | null
           ai_guidance?: string | null
           brand_id?: string
           effort?: number
@@ -1357,6 +1363,7 @@ export type Database = {
       }
       geo_prompts: {
         Row: {
+          replaces: string | null
           active: boolean
           brand_id: string
           code: string
@@ -1369,6 +1376,7 @@ export type Database = {
           text: string
         }
         Insert: {
+          replaces?: string | null
           active?: boolean
           brand_id: string
           code: string
@@ -1381,6 +1389,7 @@ export type Database = {
           text: string
         }
         Update: {
+          replaces?: string | null
           active?: boolean
           brand_id?: string
           code?: string
@@ -1475,6 +1484,7 @@ export type Database = {
       }
       geo_responses: {
         Row: {
+          override: Json | null
           accuracy: string | null
           answer: string | null
           cited: string | null
@@ -1500,6 +1510,7 @@ export type Database = {
           web_search: boolean | null
         }
         Insert: {
+          override?: Json | null
           accuracy?: string | null
           answer?: string | null
           cited?: string | null
@@ -1525,6 +1536,7 @@ export type Database = {
           web_search?: boolean | null
         }
         Update: {
+          override?: Json | null
           accuracy?: string | null
           answer?: string | null
           cited?: string | null
