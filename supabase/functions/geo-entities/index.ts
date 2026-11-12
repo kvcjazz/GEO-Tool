@@ -47,6 +47,8 @@ type Row = { id: string; prompt_id: string; raw: unknown; answer: string | null 
 const BATCH = 3; // responses per analyst call
 const PARALLEL = 4; // calls at once
 const BUDGET_MS = 110_000;
+/** Failed reads per answer before it is left alone (matches the cron job). */
+const MAX_ATTEMPTS = 3;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -74,11 +76,12 @@ Deno.serve(async (req: Request) => {
   let processed = 0;
   const errors: string[] = [];
   const skipped = new Set<string>();
+  const failedNow: string[] = [];
 
   while (Date.now() - started < BUDGET_MS - 40_000) {
     const exclude = skipped.size ? `&id=not.in.(${[...skipped].join(",")})` : "";
     const rows = (await (await rest(
-      `geo_responses?run_id=in.(${runList})&entities=is.null&engine=neq.Copilot${exclude}` +
+      `geo_responses?run_id=in.(${runList})&entities=is.null&engine=neq.Copilot&entities_attempts=lt.${MAX_ATTEMPTS}${exclude}` +
         `&select=id,prompt_id,raw,answer&limit=${BATCH * PARALLEL}`,
     )).json()) as Row[];
     if (!rows.length) break;
@@ -113,7 +116,21 @@ Deno.serve(async (req: Request) => {
           });
         } else {
           skipped.add(j.id);
+          failedNow.push(j.id);
         }
+      }
+      // Count the failure on each answer the model replied about but couldn't
+      // read, so the every-2-minutes cron stops paying to retry it after
+      // MAX_ATTEMPTS (it used to retry forever). A provider outage isn't
+      // billed and isn't the answer's fault, so it doesn't count.
+      const billed = !res.error || /could not be read/.test(res.error);
+      if (!billed) failedNow.length = 0;
+      if (failedNow.length) {
+        await rest("rpc/geo_entities_failed", {
+          method: "POST",
+          body: { ids: failedNow, err: res.error || "entity reply missed these answers" },
+        });
+        failedNow.length = 0;
       }
     }
     // Every provider failing: stop rather than burn the time budget.
@@ -121,7 +138,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const countRes = await fetch(
-    SB + `/rest/v1/geo_responses?run_id=in.(${runList})&entities=is.null&engine=neq.Copilot&select=id`,
+    SB +
+      `/rest/v1/geo_responses?run_id=in.(${runList})&entities=is.null&engine=neq.Copilot` +
+      `&entities_attempts=lt.${MAX_ATTEMPTS}&select=id`,
     { method: "HEAD", headers: { apikey: SR, authorization: "Bearer " + SR, prefer: "count=exact" } },
   );
   const remaining = Number((countRes.headers.get("content-range") || "*/0").split("/")[1]) || 0;
