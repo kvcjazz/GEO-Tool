@@ -1191,33 +1191,51 @@ export type Database = {
         Row: {
           brand_id: string
           created_at: string
+          angle: string | null
           domain: string | null
+          found_by: string | null
+          geo_angle: string | null
           id: string
           kind: string
+          pr_angle: string | null
           query: string | null
+          relevance: number | null
           seendate: string | null
+          snippet: string | null
           title: string | null
           url: string | null
         }
         Insert: {
           brand_id: string
           created_at?: string
+          angle?: string | null
           domain?: string | null
+          found_by?: string | null
+          geo_angle?: string | null
           id?: string
           kind?: string
+          pr_angle?: string | null
           query?: string | null
+          relevance?: number | null
           seendate?: string | null
+          snippet?: string | null
           title?: string | null
           url?: string | null
         }
         Update: {
           brand_id?: string
           created_at?: string
+          angle?: string | null
           domain?: string | null
+          found_by?: string | null
+          geo_angle?: string | null
           id?: string
           kind?: string
+          pr_angle?: string | null
           query?: string | null
+          relevance?: number | null
           seendate?: string | null
+          snippet?: string | null
           title?: string | null
           url?: string | null
         }

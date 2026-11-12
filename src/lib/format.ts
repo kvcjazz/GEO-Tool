@@ -25,9 +25,14 @@ export function stars(n?: number | null): string {
   return "★★★★★".slice(0, v) + "☆☆☆☆☆".slice(0, 5 - v);
 }
 
+/** A story's date as "10 Nov" — from ISO (Google News, AI search) or GDELT's 20261110… form. */
 export function newsDate(s?: string | null): string {
-  const m = /^(\d{4})(\d{2})(\d{2})/.exec(s || "");
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  const m = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(s || "");
+  if (!m) return "";
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
 export function todayISO(): string {

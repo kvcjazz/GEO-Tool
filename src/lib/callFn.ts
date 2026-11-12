@@ -13,6 +13,7 @@ const SPEND_LABELLED = new Set([
   "geo-classify-sources",
   "geo-coverage-meta",
   "geo-measure",
+  "geo-news",
   "geo-radar",
   "geo-targets",
 ]);

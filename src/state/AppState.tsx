@@ -325,7 +325,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           .select("*")
           .eq("brand_id", id)
           .order("created_at", { ascending: false })
-          .limit(20),
+          .limit(40),
         sb.from("geo_source_kinds").select("*").eq("brand_id", id),
         sb.from("geo_target_titles").select("*").eq("brand_id", id),
         sb.from("geo_search_terms").select("*").eq("brand_id", id).limit(5000),

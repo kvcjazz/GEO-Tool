@@ -6,10 +6,18 @@ import { newsDate, stars } from "@/lib/format";
 import { ctxString } from "@/lib/context";
 import { callFn } from "@/lib/callFn";
 import { buildAdviseBrief } from "@/lib/adviseBrief";
-import { NewsResponseSchema, RadarResponseSchema } from "@/lib/schemas";
+import { NewsResponseSchema, RadarResponseSchema, type NewsArticleSchema } from "@/lib/schemas";
 import { memoryText } from "@/lib/memory";
 import { latestTargets } from "@/lib/targets";
 import type { NewsItem, RadarItem } from "@/lib/types";
+import type { z } from "zod";
+
+type NewsArticle = z.infer<typeof NewsArticleSchema>;
+
+/** True when an ISO timestamp is less than `days` old. */
+function withinDays(iso: string, days: number): boolean {
+  return Date.now() - new Date(iso).getTime() < days * 86400_000;
+}
 
 function feasTag(f?: string | null) {
   const s = (f || "").toLowerCase();
@@ -46,57 +54,78 @@ export default function PlanningView() {
 
   if (!brand) return null;
 
+  /** Replaces this client's stored stories of one kind. Returns an error message, if any. */
   async function storeNews(
     brandId: string,
-    news: { title?: string | null; url?: string | null; domain?: string | null; seendate?: string | null }[] | null | undefined,
+    news: NewsArticle[] | null | undefined,
     kind: "theme" | "competitor",
-  ) {
-    if (!news) return;
-    try {
-      await sb.from("geo_news").delete().eq("brand_id", brandId).eq("kind", kind);
-      if (!news.length) return;
-      const rows = news.slice(0, 20).map((n) => ({
-        brand_id: brandId,
-        title: n.title,
-        url: n.url,
-        domain: n.domain,
-        seendate: n.seendate,
-        kind,
-      }));
-      await sb.from("geo_news").insert(rows);
-    } catch {
-      /* ignore */
-    }
+  ): Promise<string | null> {
+    if (!news) return null;
+    const del = await sb.from("geo_news").delete().eq("brand_id", brandId).eq("kind", kind);
+    if (del.error) return del.error.message;
+    if (!news.length) return null;
+    const rows = news.slice(0, 20).map((n) => ({
+      brand_id: brandId,
+      title: n.title,
+      url: n.url,
+      domain: n.domain,
+      seendate: n.seendate,
+      kind,
+      snippet: n.snippet ?? null,
+      pr_angle: n.pr_angle ?? null,
+      geo_angle: n.geo_angle ?? null,
+      relevance: n.relevance ?? null,
+      found_by: n.found_by ?? null,
+      angle: n.angle ?? null,
+    }));
+    const ins = await sb.from("geo_news").insert(rows);
+    return ins.error ? ins.error.message : null;
   }
 
   async function refreshNews() {
+    if (
+      !window.confirm(
+        "Find breaking news for " +
+          brand!.name +
+          "? The AI reads the client profile, searches the last 14 days of news and explains " +
+          "how each story could be used for PR and GEO. Uses a few cents of AI credit.",
+      )
+    )
+      return;
     setBusyNews(true);
     try {
       const j = await callFn(
         "geo-news",
         {
+          brief: buildAdviseBrief(brand!, data),
           brand: brand!.name,
           themes: brand!.themes,
           sector: brand!.sector,
           pr_region: brand!.pr_region,
           market_country: brand!.market_country,
           competitors: data.competitors.map((c) => c.name),
+          mediaTargets: data.media.map((m) => ({ outlet: m.outlet })),
         },
         NewsResponseSchema,
       );
-      await storeNews(brand!.id, j.articles, "theme");
-      await storeNews(brand!.id, j.competitorNews, "competitor");
-      toast(
-        j.articles && j.articles.length
-          ? j.articles.length +
-              " stories pulled" +
-              (j.competitorNews && j.competitorNews.length
-                ? " · " + j.competitorNews.length + " competitor"
-                : "")
-          : j.error
-            ? "News source unavailable: " + j.error
-            : "No fresh stories found for these themes",
-      );
+      if (j.error && !j.articles?.length && !j.competitorNews?.length) {
+        toast("News search failed: " + j.error);
+      } else {
+        const err =
+          (await storeNews(brand!.id, j.articles, "theme")) ||
+          (await storeNews(brand!.id, j.competitorNews, "competitor"));
+        const n = j.articles?.length || 0;
+        const c = j.competitorNews?.length || 0;
+        toast(
+          err
+            ? "Couldn't save the stories: " + err
+            : n || c
+              ? `${n} stor${n === 1 ? "y" : "ies"} worth using` +
+                  (c ? ` · ${c} competitor` : "") +
+                  (j.source === "google" ? " · headlines only (AI unavailable: " + (j.note || "unknown") + ")" : "")
+              : "No usable stories in the last 14 days" + (j.note ? " (" + j.note + ")" : ""),
+        );
+      }
       await reload();
     } catch (e) {
       toast("News error: " + String(e));
@@ -117,6 +146,9 @@ export default function PlanningView() {
     setBusyRadar(true);
     try {
       const mem = await buildFeasibilityMemory();
+      const recentlyExplained = (n: NewsItem) => !!n.pr_angle && withinDays(n.created_at, 3);
+      const freshNews = news.filter(recentlyExplained);
+      const freshComp = compNews.filter(recentlyExplained);
       const existingTitles = radar
         .filter((r) => r.status !== "dismissed")
         .map((r) => r.title)
@@ -169,10 +201,17 @@ export default function PlanningView() {
         })),
         existingTitles,
         feasibilityMemory: memoryText(mem),
+        // Stories the news radar already explained, if refreshed in the last 3
+        // days; otherwise the Radar fetches its own headlines.
+        ...(freshNews.length ? { news: freshNews.map(radarStory), competitorNews: freshComp.map(radarStory) } : {}),
       };
       const j = await callFn("geo-radar", payload, RadarResponseSchema);
-      await storeNews(brand!.id, j.news, "theme");
-      await storeNews(brand!.id, j.competitorNews, "competitor");
+      // Keep the explained stories in the panel; only fill an empty panel with
+      // the Radar's raw headlines.
+      if (!news.length) {
+        await storeNews(brand!.id, j.news, "theme");
+        await storeNews(brand!.id, j.competitorNews, "competitor");
+      }
       const items = j.items || [];
       const norm = (s?: string | null) =>
         (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -421,25 +460,56 @@ export default function PlanningView() {
     brand.pr_region ||
     brand.pr_newsworthy
   );
-  const news = data.news || [];
-  const compNews = data.compNews || [];
+  const byRelevance = (a: NewsItem, b: NewsItem) =>
+    (b.relevance || 0) - (a.relevance || 0) || (b.seendate || "").localeCompare(a.seendate || "");
+  const news = [...(data.news || [])].sort(byRelevance);
+  const compNews = [...(data.compNews || [])].sort(byRelevance);
+  const explained = news.some((n) => n.pr_angle || n.geo_angle);
+  const radarStory = (n: NewsItem) => ({
+    title: n.title || "",
+    url: n.url || "",
+    domain: n.domain || "",
+    seendate: n.seendate || "",
+    snippet: n.snippet,
+    pr_angle: n.pr_angle,
+  });
+  const refreshedAt = news[0]?.created_at || compNews[0]?.created_at;
   const mem = memory || [];
 
   const NewsRow = ({ n }: { n: NewsItem }) => (
-    <div
-      style={{ fontSize: 12, padding: "5px 0", borderBottom: "1px solid var(--line)" }}
-    >
-      {n.url ? (
-        <a href={n.url} target="_blank" rel="noreferrer">
-          {n.title}
-        </a>
-      ) : (
-        n.title
-      )}{" "}
-      <span className="muted">
-        · {n.domain || ""}
-        {newsDate(n.seendate) ? " · " + newsDate(n.seendate) : ""}
-      </span>
+    <div className="news-row">
+      <div className="news-head">
+        {n.url ? (
+          <a href={n.url} target="_blank" rel="noreferrer">
+            {n.title}
+          </a>
+        ) : (
+          n.title
+        )}{" "}
+        <span className="muted">
+          · {n.domain || ""}
+          {newsDate(n.seendate) ? " · " + newsDate(n.seendate) : ""}
+        </span>
+        {n.relevance ? (
+          <span className="news-rel" title="How useful the AI judged this story (1–5)">
+            {" "}
+            {stars(n.relevance)}
+          </span>
+        ) : null}
+      </div>
+      {n.snippet && <div className="news-snippet">{n.snippet}</div>}
+      {n.pr_angle && (
+        <div className="news-why">
+          <span className="news-label pr">📣 PR</span>
+          <span>{n.pr_angle}</span>
+        </div>
+      )}
+      {n.geo_angle && (
+        <div className="news-why">
+          <span className="news-label geo">🔍 GEO</span>
+          <span>{n.geo_angle}</span>
+        </div>
+      )}
     </div>
   );
 
@@ -460,32 +530,34 @@ export default function PlanningView() {
           <h3 style={{ margin: 0 }}>
             📰 Breaking news radar{" "}
             <span className="muted" style={{ textTransform: "none", fontWeight: 500 }}>
-              — last 14 days, matched to this client
+              — last 14 days, picked for this client
+              {refreshedAt ? " · searched " + newsDate(refreshedAt) : ""}
             </span>
           </h3>
           {mode === "team" && (
             <button className="btn sm ghost" onClick={refreshNews} disabled={busyNews}>
-              {busyNews ? "↻ Fetching…" : "↻ Refresh news"}
+              {busyNews ? "↻ Searching… (about a minute)" : "↻ Find breaking news"}
             </button>
           )}
         </div>
         {news.length ? (
           <>
-            <div style={{ marginTop: 8, maxHeight: 210, overflow: "auto" }}>
+            <div className="news-list">
               {news.slice(0, 12).map((n) => (
                 <NewsRow key={n.id} n={n} />
               ))}
             </div>
             <div className="legend-note">
-              These headlines feed the Radar&#39;s newsjacking suggestions when you
-              ask for new ideas.
+              {explained
+                ? "The AI read the client profile and latest AI-visibility check, searched Google News and the web, and kept the stories the team could use. 📣 PR = how to use it for coverage; 🔍 GEO = how it could get the client named or cited in AI answers. Stories feed new ideas below."
+                : "Headlines only — click Find breaking news for stories picked and explained by the AI."}
             </div>
           </>
         ) : (
           <div className="sec-sub" style={{ marginTop: 8 }}>
-            No news pulled yet.{" "}
+            No news searched yet.{" "}
             {mode === "team"
-              ? "Click Refresh news, or just get new ideas — that pulls fresh news automatically."
+              ? "Click Find breaking news: the AI picks stories from the last 14 days and explains how each could be used for PR and GEO."
               : ""}
           </div>
         )}
@@ -500,7 +572,7 @@ export default function PlanningView() {
               — last 14 days
             </span>
           </h3>
-          <div style={{ maxHeight: 170, overflow: "auto", marginTop: 6 }}>
+          <div className="news-list">
             {compNews.slice(0, 8).map((n) => (
               <NewsRow key={n.id} n={n} />
             ))}

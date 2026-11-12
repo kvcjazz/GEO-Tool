@@ -148,7 +148,16 @@ export type ModelResult = {
   searched: boolean;
   /** Why a requested web search fell back to a plain answer, if it did. */
   searchError?: string;
+  /**
+   * Every page Claude's web search returned (not only the ones it cited), with
+   * the age the search reported. Lets a caller check that a URL or date in the
+   * answer really came from a search. Claude only; empty otherwise.
+   */
+  sources?: SearchSource[];
 };
+
+/** One web search result: the page, its title and how old the search said it was. */
+export type SearchSource = { url: string; title: string; pageAge: string };
 
 export type CallOptions = {
   /** Answer with the provider's own web-search tool switched on. */
@@ -164,6 +173,19 @@ export type CallOptions = {
    * (each model id tried, each retry) is logged to geo_ai_usage.
    */
   usage?: UsageContext;
+  /**
+   * Model ids to use instead of the provider's MODEL_CHAIN (and its pinned
+   * secret), in order. For calls that want a cheaper model than the analysis
+   * default. The winner is not remembered, so other calls keep their model.
+   */
+  models?: string[];
+  /** Searches Claude may run in one answer (default 3). Claude only. */
+  maxSearches?: number;
+  /**
+   * Fail rather than fall back to an unsearched answer when the search is
+   * refused. For callers where an answer from memory would be made up (news).
+   */
+  searchRequired?: boolean;
 };
 
 /** Labels a call in the AI spend log (geo_ai_usage). */
@@ -264,11 +286,13 @@ type Attempt = {
   message: string;
   /** What the request used, when the provider said (also on some failures). */
   usage?: Usage;
+  sources?: SearchSource[];
 };
 
 const resolvedModel = new Map<ProviderId, string>();
 
-function candidates(provider: ProviderId): string[] {
+function candidates(provider: ProviderId, models?: string[]): string[] {
+  if (models?.length) return models;
   const pinned = Deno.env.get(MODEL_ENV[provider]);
   if (pinned) return [pinned];
   const cached = resolvedModel.get(provider);
@@ -394,8 +418,23 @@ type AnthropicBlock = {
   type?: string;
   text?: string;
   citations?: { url?: string }[];
-  content?: { type?: string; url?: string }[] | { error_code?: string };
+  content?: { type?: string; url?: string; title?: string; page_age?: string }[] | {
+    error_code?: string;
+  };
 };
+
+/** Every result of every web search in a Claude reply (a failed search has an error object, not a list). */
+export function searchSources(blocks: AnthropicBlock[]): SearchSource[] {
+  const out: SearchSource[] = [];
+  for (const b of blocks) {
+    if (b.type !== "web_search_tool_result" || !Array.isArray(b.content)) continue;
+    for (const r of b.content) {
+      if (r.type !== "web_search_result" || !r.url) continue;
+      out.push({ url: r.url, title: r.title || "", pageAge: r.page_age || "" });
+    }
+  }
+  return out;
+}
 
 /**
  * Claude with its server-side web search tool. This uses the basic tool, capped
@@ -409,11 +448,12 @@ async function anthropicSearch(
   model: string,
   maxTokens: number,
   country: string | null,
+  maxSearches = 3,
 ): Promise<Attempt> {
   const tool = {
     type: "web_search_20250305",
     name: "web_search",
-    max_uses: 3,
+    max_uses: maxSearches,
     ...(country ? { user_location: { type: "approximate", country } } : {}),
   };
   const messages: { role: string; content: unknown }[] = [
@@ -460,7 +500,7 @@ async function anthropicSearch(
   const citations = blocks
     .flatMap((b) => (b.type === "text" ? (b.citations || []).map((c) => c.url || "") : []))
     .filter(Boolean);
-  return { ok: true, status: 200, text, citations, message: "", usage };
+  return { ok: true, status: 200, text, citations, message: "", usage, sources: searchSources(blocks) };
 }
 
 /**
@@ -539,9 +579,10 @@ async function attempt(
   maxTokens: number,
   webSearch: boolean,
   country: string | null,
+  maxSearches?: number,
 ): Promise<Attempt> {
   if (provider === "anthropic") {
-    if (webSearch) return anthropicSearch(key, prompt, model, maxTokens, country);
+    if (webSearch) return anthropicSearch(key, prompt, model, maxTokens, country, maxSearches);
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -697,12 +738,12 @@ export async function callModel(
   const country = searched ? countryCode(opts.country) : null;
   let lastError = "";
   let lastModel = "";
-  for (const model of candidates(provider)) {
+  for (const model of candidates(provider, opts.models)) {
     lastModel = model;
     for (let tries = 0; tries < 2; tries++) {
       let a: Attempt;
       try {
-        a = await attempt(provider, key, prompt, model, maxTokens, webSearch, country);
+        a = await attempt(provider, key, prompt, model, maxTokens, webSearch, country, opts.maxSearches);
       } catch (e) {
         const timedOut = e instanceof DOMException && e.name === "TimeoutError";
         a = timedOut
@@ -713,8 +754,8 @@ export async function callModel(
       // have been billed, and spend-limit failures show up in the spend panel.
       await logUsage(opts.usage, provider, model, a.usage, a.ok, a.message);
       if (a.ok) {
-        resolvedModel.set(provider, model);
-        return { text: a.text, citations: a.citations, model, error: "", searched };
+        if (!opts.models?.length) resolvedModel.set(provider, model);
+        return { text: a.text, citations: a.citations, model, error: "", searched, sources: a.sources };
       }
       lastError = `${model} → ${a.message}`;
       if (isBillingBlock(a.message)) {
@@ -739,13 +780,17 @@ export async function callModel(
         }
         // Auth or bad request: another model id will not help. A rejected
         // search request still gets a plain answer, flagged as unsearched.
-        if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError, opts.usage);
+        if (webSearch && !opts.searchRequired) {
+          return searchFallback(provider, key, prompt, maxTokens, lastError, opts.usage);
+        }
         return { text: "", citations: [], model, error: lastError, searched };
       }
       if (tries === 0) await new Promise((res) => setTimeout(res, 1200));
     }
   }
-  if (webSearch) return searchFallback(provider, key, prompt, maxTokens, lastError, opts.usage);
+  if (webSearch && !opts.searchRequired) {
+    return searchFallback(provider, key, prompt, maxTokens, lastError, opts.usage);
+  }
   return {
     text: "",
     citations: [],

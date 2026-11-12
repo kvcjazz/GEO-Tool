@@ -1458,3 +1458,58 @@ button.expander {
 .starter-list .tag {
   flex: none;
 }
+
+/* ---------- breaking news radar (PR Planning) ---------- */
+.news-list {
+  margin-top: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+.news-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.news-row:last-child {
+  border-bottom: 0;
+}
+.news-head a {
+  font-weight: 600;
+}
+.news-head .muted {
+  font-size: 12px;
+}
+.news-rel {
+  color: var(--amber);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.news-snippet {
+  margin-top: 3px;
+  color: var(--ink);
+}
+.news-why {
+  display: flex;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.news-label {
+  flex: 0 0 auto;
+  min-width: 52px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  height: fit-content;
+}
+.news-label.pr {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.news-label.geo {
+  background: #e3f4ea;
+  color: var(--green);
+}

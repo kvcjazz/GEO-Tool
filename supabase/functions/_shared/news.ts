@@ -105,6 +105,19 @@ export async function googleNews(
   }
 }
 
+/**
+ * The parts of a free-text field that work as news search terms: short
+ * phrases, not sentences. Teams sometimes paste whole messaging documents into
+ * Themes; split on commas those become sentence fragments that no article
+ * contains, and an OR query of exact phrases then finds nothing at all.
+ */
+export function searchTerms(text: string | null | undefined, maxWords = 5): string[] {
+  return String(text || "")
+    .split(/[,;\n]|\s[—–-]\s/)
+    .map((t) => t.replace(/[.!?:"“”]+$/g, "").trim())
+    .filter((t) => t && t.split(/\s+/).length <= maxWords && t.length <= 50);
+}
+
 /** Theme news for a client: its themes, else its name and sector, in its market. */
 export async function themeNews(b: {
   themes?: string | null;
@@ -112,8 +125,9 @@ export async function themeNews(b: {
   sector?: string | null;
   country?: string | null;
 }): Promise<{ articles: Article[]; query: string; error?: string }> {
-  const themes = String(b.themes || "").split(/[,;]/).map((t) => t.trim()).filter(Boolean);
-  const terms = themes.length ? [...themes, b.brand] : [b.brand, b.sector];
+  const themes = searchTerms(b.themes);
+  // The client's name first, so a long theme list can never push it out.
+  const terms = themes.length ? [b.brand, ...themes] : [b.brand, ...searchTerms(b.sector)];
   const query = orQuery(terms.length ? terms : ["technology"]);
   let res = await googleNews(query, { country: b.country });
   // A thin local edition falls back to the international one.

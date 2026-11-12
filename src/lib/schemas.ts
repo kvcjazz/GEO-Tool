@@ -14,12 +14,26 @@ export const NewsArticleSchema = z.object({
   url: z.string().nullish(),
   domain: z.string().nullish(),
   seendate: z.string().nullish(),
+  // Why the news radar picked it (geo-news); absent on raw headlines.
+  snippet: z.string().nullish(),
+  pr_angle: z.string().nullish(),
+  geo_angle: z.string().nullish(),
+  relevance: z.number().nullish(),
+  found_by: z.string().nullish(),
+  angle: z.string().nullish(),
 });
 
 export const NewsResponseSchema = z.object({
   articles: z.array(NewsArticleSchema).nullish(),
   competitorNews: z.array(NewsArticleSchema).nullish(),
   query: z.string().nullish(),
+  angles: z
+    .array(z.object({ topic: z.string(), query: z.string(), why: z.string().nullish() }))
+    .nullish(),
+  /** "ai" = explained by the AI; "google" = raw headlines; "none" = nothing found. */
+  source: z.string().nullish(),
+  model: z.string().nullish(),
+  note: z.string().nullish(),
   error: z.string().nullish(),
 });
 export type NewsResponse = z.infer<typeof NewsResponseSchema>;

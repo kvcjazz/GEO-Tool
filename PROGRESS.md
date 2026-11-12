@@ -345,3 +345,46 @@ with a message or save without the extra field).
 - Boot-checked each with a harmless request via pg_net (expected 400/401/410
   answers from the new code). Not yet seen: a real measurement or AI call
   writing to `geo_ai_usage` — check Admin → AI spend after the next check.
+
+## 2026-11-12 — Breaking news radar rebuilt (AI picks + PR and GEO reasons)
+
+Why: the panel was empty for Hippo. Its Themes field holds a full narrative,
+and the old search split it on commas into sentence fragments searched as exact
+phrases, which match nothing (the client's name was pushed out of the query
+too). Dates never showed either: `newsDate` only read GDELT's `20261110` form.
+
+- **geo-news (rewritten):** three Claude Haiku 5.5 (`claude-haiku-5-5`, $0.10 /
+  $0.50 per M tokens) steps — chosen as the cheapest model that does this well:
+  1. *plan*: reads the client profile + latest AI-visibility check (the app's
+     `buildAdviseBrief`) and picks 5 PR search angles (2–6 word queries);
+  2. *search*: Google News RSS per angle + client name + competitors, and
+     Claude web search (max 5 searches, $10/1k) for the same angles, last 14
+     days, in the client's market;
+  3. *rank*: keeps usable stories, writes a ≤25-word snippet, a PR angle and a
+     GEO angle (buyer question / cited site it ties to), relevance 1–5.
+  Links and dates are never taken from the AI unchecked: AI-search stories
+  must match a URL its searches returned and fall in the window (model date,
+  else the result's page age); ranking refers to stories by number. Ranking
+  falls back to the analyst chain; with no AI at all it returns plain Google
+  headlines and says why. Logic in `_shared/newsradar.ts` (+ tests).
+  Expected cost: about 5–6¢ per refresh, mostly the web searches.
+- **providers.ts:** `callModel` options `models` (per-call model list that
+  doesn't change other calls' model), `maxSearches`, `searchRequired` (no
+  silent unsearched fallback — for news it would be made up); Claude web
+  search returns `sources` (every result URL + page age).
+- **news.ts:** `searchTerms` drops theme fragments over 5 words and the
+  client's name goes first — fixes the empty panel for geo-radar / geo-listen
+  headline fetches too.
+- **geo-radar:** accepts `news` / `competitorNews` (already explained, with PR
+  angle) and uses them instead of fetching headlines again.
+- **DB:** migration `20261112190000_news_pr_geo_angles` adds `snippet`,
+  `pr_angle`, `geo_angle`, `relevance`, `found_by`, `angle` to `geo_news`.
+- **App:** PR Planning "Find breaking news" (confirm, cost note) sends the
+  brief + media targets; story cards show snippet, 📣 PR and 🔍 GEO reasons and
+  relevance, sorted by relevance; "Get new ideas" passes stories explained in
+  the last 3 days to geo-radar and no longer overwrites them with raw
+  headlines; dates show as "10 Nov"; save errors are reported.
+- Verified: `next build`, `tsc`, eslint (no new errors; the 3 in
+  PlanningView/AppState are on main), `deno check` every function, 41 edge
+  tests (8 new); story cards rendered with the app CSS at desktop and phone
+  width.

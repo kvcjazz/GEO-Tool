@@ -68,7 +68,15 @@ type Body = {
   existingTitles?: string[];
   feasibilityMemory?: string;
   brief?: Brief;
+  /**
+   * Stories the news radar (geo-news) already found and explained, when the
+   * app has a fresh set. Used instead of fetching raw headlines again.
+   */
+  news?: RadarNews[];
+  competitorNews?: RadarNews[];
 };
+
+type RadarNews = Article & { snippet?: string | null; pr_angle?: string | null };
 
 type Item = {
   stream: "pr_activity" | "geo_insight";
@@ -87,8 +95,13 @@ const clip = (s: unknown, n: number) => {
   return t.length > n ? t.slice(0, n) : t;
 };
 
-function newsLines(arts: Article[], n: number): string {
-  return arts.slice(0, n).map((a, i) => `${i + 1}. ${a.title} (${a.domain})`).join("\n");
+function newsLines(arts: RadarNews[], n: number): string {
+  return arts
+    .slice(0, n)
+    .map((a, i) =>
+      `${i + 1}. ${a.title} (${a.domain})` + (a.pr_angle ? ` — PR use: ${clip(a.pr_angle, 240)}` : "")
+    )
+    .join("\n");
 }
 
 /** What the latest measurement says, in a few lines the strategist can act on. */
@@ -153,7 +166,7 @@ function evidenceBlock(br: Brief | undefined): string {
   return parts.length ? "\n\nWHAT THE LATEST AI-VISIBILITY CHECK FOUND:\n" + parts.join("\n") : "";
 }
 
-function prompt(b: Body, news: Article[], compNews: Article[]): string {
+function prompt(b: Body, news: RadarNews[], compNews: RadarNews[]): string {
   const br = b.brief;
   const targets = (b.mediaTargets || [])
     .map((t) => t.outlet + (t.vip ? " (VIP)" : "") + (t.tier ? ` [${t.tier}]` : ""))
@@ -224,7 +237,7 @@ function prompt(b: Body, news: Article[], compNews: Article[]): string {
   );
 }
 
-function template(b: Body, news: Article[]): Item[] {
+function template(b: Body, news: RadarNews[]): Item[] {
   const brand = b.brand || "this client";
   const themes = String(b.themes || "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
   const t0 = themes[0] || b.sector || "the category";
@@ -291,13 +304,21 @@ Deno.serve(async (req: Request) => {
   const b = (await req.json().catch(() => ({}))) as Body;
   const country = countryCode(b.market_country ?? b.brief?.client?.market_country);
 
-  const [theme, comp] = await Promise.all([
-    themeNews({ themes: b.themes, brand: b.brand, sector: b.sector, country }),
-    competitorNews(b.competitors || [], country),
-  ]);
-  const news = theme.articles;
-  const compNews = comp.articles;
-  const newsError = theme.error || comp.error;
+  // Fresh stories from the news radar when the app sends them; else headlines.
+  const given = (a: RadarNews[] | undefined) =>
+    (a || []).filter((x) => x && x.title).map((x) => ({ ...x, url: x.url || "", domain: x.domain || "", seendate: x.seendate || "" }));
+  let news: RadarNews[] = given(b.news);
+  let compNews: RadarNews[] = given(b.competitorNews);
+  let newsError: string | undefined;
+  if (!news.length) {
+    const [theme, comp] = await Promise.all([
+      themeNews({ themes: b.themes, brand: b.brand, sector: b.sector, country }),
+      competitorNews(b.competitors || [], country),
+    ]);
+    news = theme.articles;
+    compNews = comp.articles;
+    newsError = theme.error || comp.error;
+  }
 
   const out = await callAnalyst(prompt(b, news, compNews), 8000, { fn: "geo-radar", purpose: "radar", brandId: b.brand_id });
   const parsed = out.error ? null : parseJson<{ items?: Record<string, unknown>[] }>(out.text);
