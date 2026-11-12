@@ -166,6 +166,11 @@ export const AREAS: Area[] = [
         hint: "Every question we track, and which engines named this client when asked it.",
       },
       {
+        id: "competitors",
+        label: "Competitors",
+        hint: "Every brand the engines name instead of this client, and the buyer questions each one wins.",
+      },
+      {
         id: "sources",
         label: "Sources AI trusts",
         hint: "The sites the engines cited in their answers — where this client already is, and where it needs to be.",

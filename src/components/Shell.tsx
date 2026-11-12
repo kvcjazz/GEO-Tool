@@ -8,6 +8,7 @@ import type { Area } from "@/lib/constants";
 import { setupSteps } from "@/lib/setup";
 import DashboardView from "@/views/DashboardView";
 import CaptureView from "@/views/CaptureView";
+import CompetitorsView from "@/views/CompetitorsView";
 import BacklogView from "@/views/BacklogView";
 import PlanningView from "@/views/PlanningView";
 import SourcesView from "@/views/SourcesView";
@@ -27,7 +28,15 @@ function AreaBody({ area, tab }: { area: string; tab: string }) {
     case "clients":
       return <ClientsView />;
     case "answers":
-      return tab === "sources" ? <SourcesView /> : tab === "mentions" ? <ListeningView /> : <CaptureView />;
+      return tab === "sources" ? (
+        <SourcesView />
+      ) : tab === "mentions" ? (
+        <ListeningView />
+      ) : tab === "competitors" ? (
+        <CompetitorsView />
+      ) : (
+        <CaptureView />
+      );
     case "plan":
       return tab === "actions" ? <BacklogView /> : tab === "titles" ? <TargetsView /> : <PlanningView />;
     case "coverage":
